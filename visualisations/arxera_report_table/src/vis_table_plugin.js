@@ -184,7 +184,7 @@ const tableModelCoreOptions = {
   subtotalLabelSuffix: {
     section: 'Table',
     type: 'string',
-    label: "Subtotal label suffix (e.g. ' Total')",
+    label: "Subtotal label suffix (e.g. 'Total')",
     default: '',
     order: 11.5,
   },
@@ -274,7 +274,10 @@ class VisPluginTableModel {
     this.showTooltip = config.showTooltip || false;
     this.showHighlight = config.showHighlight || false;
     this.genericLabelForSubtotals = config.genericLabelForSubtotals || false;
-    this.subtotalLabelSuffix = config.subtotalLabelSuffix || '';
+    // Looker trims text options, so the suffix is joined with a space.
+    this.subtotalLabelSuffix = (config.subtotalLabelSuffix || '').trim()
+      ? ' ' + config.subtotalLabelSuffix.trim()
+      : '';
     this.totalLabel = config.totalLabel || 'TOTAL';
     this.runningTotals = VisPluginTableModel.parseRunningTotals(
       config.runningTotals

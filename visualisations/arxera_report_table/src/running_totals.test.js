@@ -142,19 +142,22 @@ describe('addRunningTotals', () => {
     warn.mockRestore();
   });
 
-  test('adds a suffix to subtotal labels when configured', () => {
-    const model = new VisPluginTableModel(flatData(), flatQuery(), {
-      ...config(''),
-      subtotalLabelSuffix: ' Total',
+  test('adds a suffix to subtotal labels, separated by a space', () => {
+    // Looker trims text options, so 'Total' and ' Total' must both work.
+    ['Total', ' Total', 'Total '].forEach(suffix => {
+      const model = new VisPluginTableModel(flatData(), flatQuery(), {
+        ...config(''),
+        subtotalLabelSuffix: suffix,
+      });
+      const labels = model.data
+        .filter(row => row.type === 'subtotal')
+        .map(row => row.data['pl.section'].value);
+      expect(labels).toEqual([
+        'Rental Income Total',
+        'Other Property Income Total',
+        'Direct Costs Total',
+      ]);
     });
-    const labels = model.data
-      .filter(row => row.type === 'subtotal')
-      .map(row => row.data['pl.section'].value);
-    expect(labels).toEqual([
-      'Rental Income Total',
-      'Other Property Income Total',
-      'Direct Costs Total',
-    ]);
   });
 
   test('changes nothing when no running totals are configured', () => {
