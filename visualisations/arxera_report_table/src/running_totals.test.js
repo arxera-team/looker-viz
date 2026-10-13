@@ -290,4 +290,64 @@ describe('addRunningTotals', () => {
     expect(totalOf(labelled).data['pl.section'].value).toBe('Net Result');
     expect(totalOf(unlabelled).data['pl.section'].value).toBe('TOTAL');
   });
+
+  test('leaves non-additive measures blank unless the tile opts in', () => {
+    const measure = (name, type, extra = {}) => ({
+      ...amount,
+      name: name,
+      label: name,
+      type: type,
+      ...extra,
+    });
+    const query = flatQuery();
+    query.fields.measure_like = [
+      amount,
+      measure('pl.count_distinct', 'count_distinct'),
+      measure('pl.max', 'max'),
+      measure('pl.median', 'median'),
+      measure('pl.yield', 'number', {value_format: '0.00'}),
+      measure('pl.variance', 'number'),
+    ];
+    const data = flatData().map(row => ({
+      ...row,
+      'pl.count_distinct': {value: 1, rendered: '1'},
+      'pl.max': {value: 5, rendered: '5'},
+      'pl.median': {value: 2, rendered: '2'},
+      'pl.yield': {value: 0.05, rendered: '0.05'},
+      'pl.variance': {value: 3, rendered: '3'},
+    }));
+    const model = new VisPluginTableModel(data, query, {
+      ...config('NOI > Direct Costs'),
+      'runningTotal|pl.variance': true,
+    });
+    const noi = model.data.find(row => row.id === 'RunningTotal|NOI');
+    expect(noi.data['pl.amount'].value).toBe(80);
+    expect(noi.data['pl.count_distinct'].value).toBe('');
+    expect(noi.data['pl.max'].value).toBe('');
+    expect(noi.data['pl.median'].value).toBe('');
+    expect(noi.data['pl.yield'].value).toBe('');
+    expect(noi.data['pl.yield'].rendered).toBe('');
+    // number measure the tile marked as additive: 6 lines x 3.
+    expect(noi.data['pl.variance'].value).toBe(18);
+  });
+
+  test('defaults the running total setting from the measure type', () => {
+    const isAdditive = VisPluginTableModel.isAdditiveMeasure;
+    expect(isAdditive({calculation_type: 'sum', is_numeric: true})).toBe(true);
+    expect(isAdditive({calculation_type: 'count', is_numeric: true})).toBe(
+      true
+    );
+    expect(
+      isAdditive({calculation_type: 'sum_distinct', is_numeric: true})
+    ).toBe(true);
+    ['count_distinct', 'min', 'max', 'median', 'average', 'number'].forEach(
+      type =>
+        expect(isAdditive({calculation_type: type, is_numeric: true})).toBe(
+          false
+        )
+    );
+    expect(isAdditive({calculation_type: 'sum', is_numeric: false})).toBe(
+      false
+    );
+  });
 });

@@ -470,6 +470,15 @@ class VisPluginTableModel {
         order: 100 + i * 10 + 3.7,
       };
 
+      newOptions['runningTotal|' + measure.name] = {
+        section: 'Measures',
+        type: 'boolean',
+        label: 'Add up in running totals',
+        display_size: 'third',
+        default: VisPluginTableModel.isAdditiveMeasure(measure),
+        order: 100 + i * 10 + 3.8,
+      };
+
       var comparisonOptions = [];
 
       if (measure.can_pivot) {
@@ -1741,6 +1750,22 @@ class VisPluginTableModel {
   }
 
   /**
+   * Whether a measure can be added up across rows by default: Looker sum,
+   * sum_distinct and count measures. Others (count_distinct, min, max,
+   * median, average, percentile, number measures such as ratios, table
+   * calculations, text) give meaningless sums, so running totals leave them
+   * blank unless the tile opts in with 'Add up in running totals'.
+   * @param {{calculation_type: string, is_numeric: boolean}} measure
+   * @returns {boolean}
+   */
+  static isAdditiveMeasure(measure) {
+    return (
+      Boolean(measure.is_numeric) &&
+      ['sum', 'sum_distinct', 'count'].includes(measure.calculation_type)
+    );
+  }
+
+  /**
    * Parses the runningTotals option: entries separated by ';' or new lines,
    * each 'Label > group, group, ...'. The groups are row subtotal groups (the
    * value of the first dimension, or all subtotal dimensions joined by ' | ')
@@ -1773,8 +1798,9 @@ class VisPluginTableModel {
    * its group and every group above it, so it is the cumulative total of all
    * subtotals so far. Calculated per measure column (each pivot and row total
    * column separately) from the line items, never from displayed subtotal or
-   * running total rows, so nothing is counted twice. Text, average and
-   * percentage measures are left blank. Running total rows have no drill.
+   * running total rows, so nothing is counted twice. Only additive measures
+   * are summed (see isAdditiveMeasure, or the measure's 'Add up in running
+   * totals' setting); others are left blank. Running total rows have no drill.
    */
   addRunningTotals() {
     this.runningTotals.forEach((runningTotal, r) => {
@@ -1832,12 +1858,15 @@ class VisPluginTableModel {
         }
 
         if (column.modelField.type === 'measure') {
+          var addUp =
+            this.config['runningTotal|' + column.modelField.name];
           var additive =
             numeric &&
-            column.modelField.calculation_type !== 'string' &&
-            column.modelField.calculation_type !== 'average' &&
-            !(column.modelField.value_format || '').includes('%');
-          var value = null;
+            (typeof addUp === 'boolean'
+              ? addUp
+              : VisPluginTableModel.isAdditiveMeasure(column.modelField));
+          // Blank (not null, which renders as '∅') when not added up.
+          var value = '';
           if (additive) {
             value = 0;
             this.data.forEach(row => {
@@ -1858,7 +1887,7 @@ class VisPluginTableModel {
           runningTotalRow.data[column.id] = new DataCell({
             value: value,
             rendered:
-              value === null
+              value === ''
                 ? ''
                 : this.formatCellValue(column.modelField.value_format, value),
             cell_style: [
