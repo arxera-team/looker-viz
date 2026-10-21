@@ -5,6 +5,13 @@
 
 import {VisPluginTableModel} from './vis_table_plugin';
 import * as d3 from './d3loader';
+import {
+  copyText,
+  downloadText,
+  matrixToCsv,
+  matrixToTsv,
+  tableToMatrix,
+} from './table_export';
 import themeTraditional from './theme_traditional.css';
 import themeLooker from './theme_looker.css';
 import themeContemporary from './theme_contemporary.css';
@@ -104,6 +111,43 @@ const buildReportTable = async function (
       var metrics = context.measureText(text);
       return metrics.width;
     };
+
+    // Looker's downloads use the query results, so rows the table adds
+    // (subtotals, running totals) can only be exported from here
+    if (dataTable.exportButtons) {
+      var toolbar = d3
+        .select(element)
+        .select('#visContainer')
+        .append('div')
+        .attr('id', 'exportToolbar')
+        .style('text-align', 'right')
+        .style('font-size', '11px')
+        .style('margin-bottom', '4px');
+      var status = toolbar.append('span').style('margin-right', '8px');
+      var exportMatrix = () =>
+        tableToMatrix(element.querySelector('#reportTable'));
+      var copyTable = async () => {
+        var copied = await copyText(matrixToTsv(exportMatrix()));
+        status.text(copied ? 'Copied' : 'Copy blocked by the browser');
+      };
+      toolbar
+        .append('button')
+        .attr('id', 'copyTable')
+        .text('Copy table')
+        .on('click', copyTable);
+      toolbar
+        .append('button')
+        .attr('id', 'downloadTable')
+        .style('margin-left', '4px')
+        .text('Download CSV')
+        .on('click', async () => {
+          var saved = downloadText(
+            matrixToCsv(exportMatrix()),
+            'report_table.csv'
+          );
+          if (!saved) await copyTable();
+        });
+    }
 
     var table = d3
       .select(element)
@@ -584,17 +628,16 @@ const buildReportTable = async function (
   };
 
   // Keep header rows in view while the table scrolls. Each tier sits below
-  // the one above it, and gets an opaque background so rows don't show through.
+  // the ones above it (cumulative measured heights, so pivoted headers stack),
+  // and gets an opaque background so rows don't show through.
   const freezeHeaderRows = function () {
     var rows = element.querySelectorAll('#reportTable thead tr');
-    if (!rows.length) return;
-    var firstTop = rows[0].offsetTop;
+    var top = 0;
     rows.forEach(row => {
-      var rowTop = row.offsetTop - firstTop;
       d3.select(row)
         .selectAll('th')
         .style('position', 'sticky')
-        .style('top', rowTop + 'px')
+        .style('top', top + 'px')
         .style('z-index', 1)
         .style('background-color', function () {
           var bg = window.getComputedStyle(this).backgroundColor;
@@ -602,6 +645,7 @@ const buildReportTable = async function (
             ? '#ffffff'
             : bg;
         });
+      top += row.getBoundingClientRect().height;
     });
   };
 
@@ -612,7 +656,21 @@ const buildReportTable = async function (
       reportTableEl.classList.add('reveal');
     }
     if (dataTable.freezeHeaders) {
+      // Measure once laid out, again once web fonts settle row heights, and
+      // on resize (one listener per container, replaced on each render)
       freezeHeaderRows();
+      window.requestAnimationFrame(freezeHeaderRows);
+      if (document.fonts && document.fonts.ready) {
+        document.fonts.ready.then(freezeHeaderRows);
+      }
+      if (element.freezeHeaderRowsListener) {
+        window.removeEventListener('resize', element.freezeHeaderRowsListener);
+      }
+      element.freezeHeaderRowsListener = freezeHeaderRows;
+      window.addEventListener('resize', freezeHeaderRows);
+    } else if (element.freezeHeaderRowsListener) {
+      window.removeEventListener('resize', element.freezeHeaderRowsListener);
+      element.freezeHeaderRowsListener = null;
     }
     const visSvgEl = element.querySelector('#visSvg');
     if (config.customTheme === 'animate') {
