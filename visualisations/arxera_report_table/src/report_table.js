@@ -583,11 +583,36 @@ const buildReportTable = async function (
     }
   };
 
+  // Keep header rows in view while the table scrolls. Each tier sits below
+  // the one above it, and gets an opaque background so rows don't show through.
+  const freezeHeaderRows = function () {
+    var rows = element.querySelectorAll('#reportTable thead tr');
+    if (!rows.length) return;
+    var firstTop = rows[0].offsetTop;
+    rows.forEach(row => {
+      var rowTop = row.offsetTop - firstTop;
+      d3.select(row)
+        .selectAll('th')
+        .style('position', 'sticky')
+        .style('top', rowTop + 'px')
+        .style('z-index', 1)
+        .style('background-color', function () {
+          var bg = window.getComputedStyle(this).backgroundColor;
+          return !bg || bg === 'transparent' || bg === 'rgba(0, 0, 0, 0)'
+            ? '#ffffff'
+            : bg;
+        });
+    });
+  };
+
   await renderTable();
   try {
     const reportTableEl = element.querySelector('#reportTable');
     if (reportTableEl) {
       reportTableEl.classList.add('reveal');
+    }
+    if (dataTable.freezeHeaders) {
+      freezeHeaderRows();
     }
     const visSvgEl = element.querySelector('#visSvg');
     if (config.customTheme === 'animate') {

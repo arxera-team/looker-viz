@@ -56,6 +56,13 @@ const tableModelCoreOptions = {
     default: true,
     order: 3.5,
   },
+  freezeHeaders: {
+    section: 'Theme',
+    type: 'boolean',
+    label: 'Freeze Header Rows',
+    default: false,
+    order: 3.6,
+  },
   headerFontSize: {
     section: 'Theme',
     type: 'number',
@@ -271,6 +278,7 @@ class VisPluginTableModel {
     this.fieldLevel = 0; // set in addPivotsAndHeaders()
     this.groupVarianceColumns = config.groupVarianceColumns || false;
     this.minWidthForIndexColumns = config.minWidthForIndexColumns || false;
+    this.freezeHeaders = config.freezeHeaders || false;
     this.showTooltip = config.showTooltip || false;
     this.showHighlight = config.showHighlight || false;
     this.genericLabelForSubtotals = config.genericLabelForSubtotals || false;

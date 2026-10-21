@@ -223,4 +223,64 @@ describe('report_table visualization plugin', () => {
       expect(element.querySelector('#reportTable')).not.toBeNull();
     });
   });
+
+  describe('freeze header rows', () => {
+    const queryResponse = {
+      fields: {
+        pivots: [],
+        dimension_like: [{name: 'dim1', label: 'Dimension 1', type: 'string'}],
+        measure_like: [
+          {name: 'meas1', label: 'Measure 1', type: 'number', is_numeric: true},
+        ],
+      },
+      sorts: [],
+      pivots: [],
+    };
+    const data = [
+      {
+        dim1: {value: 'Category A', rendered: 'Category A'},
+        meas1: {value: 100, rendered: '100'},
+      },
+    ];
+
+    test('option exists and is off by default', () => {
+      expect(vizPlugin.options.freezeHeaders).toEqual(
+        expect.objectContaining({type: 'boolean', default: false})
+      );
+    });
+
+    test('header cells are sticky when enabled', async () => {
+      await vizPlugin.updateAsync(
+        data,
+        element,
+        {theme: 'traditional', freezeHeaders: true},
+        queryResponse,
+        {},
+        mockDone
+      );
+      const headerCells = element.querySelectorAll('#reportTable thead th');
+      expect(headerCells.length).toBeGreaterThan(0);
+      headerCells.forEach(th => {
+        expect(th.style.position).toBe('sticky');
+        expect(th.style.top).toBe('0px');
+        expect(th.style.backgroundColor).not.toBe('');
+      });
+    });
+
+    test('header cells are not sticky when disabled', async () => {
+      await vizPlugin.updateAsync(
+        data,
+        element,
+        {theme: 'traditional'},
+        queryResponse,
+        {},
+        mockDone
+      );
+      const headerCells = element.querySelectorAll('#reportTable thead th');
+      expect(headerCells.length).toBeGreaterThan(0);
+      headerCells.forEach(th => {
+        expect(th.style.position).toBe('');
+      });
+    });
+  });
 });
