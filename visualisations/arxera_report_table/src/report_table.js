@@ -145,7 +145,13 @@ const buildReportTable = async function (
             matrixToCsv(exportMatrix()),
             'report_table.csv'
           );
-          if (!saved) await copyTable();
+          // Looker's tile frame can block downloads without an error, so say
+          // what to do if no file appears
+          if (saved) {
+            status.text('If no file appears, use Copy table');
+          } else {
+            await copyTable();
+          }
         });
     }
 
