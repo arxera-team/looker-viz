@@ -1,6 +1,7 @@
-// Exports the report table exactly as drawn: header tiers, line items,
+// Copies the report table exactly as drawn: header tiers, line items,
 // subtotals and running totals. Looker's own CSV/Excel downloads use the query
-// results, so rows the vis adds (subtotals, running totals) are only here.
+// results, so rows the vis adds (subtotals, running totals) are only here, and
+// Looker's vis iframe blocks file downloads, so the table goes via the clipboard.
 
 import SSF from 'ssf';
 
@@ -38,14 +39,6 @@ export const tableToMatrix = function (table) {
   });
   var width = Math.max(0, ...matrix.map(row => row.length));
   return matrix.map(row => Array.from({length: width}, (_, i) => row[i] ?? ''));
-};
-
-const quoteCsv = function (value) {
-  return /[",\n\r]/.test(value) ? '"' + value.replace(/"/g, '""') + '"' : value;
-};
-
-export const matrixToCsv = function (matrix) {
-  return matrix.map(row => row.map(quoteCsv).join(',')).join('\r\n');
 };
 
 // Tab separated, for pasting straight into Excel or Sheets
@@ -87,51 +80,17 @@ export const copyText = async function (text, doc = document) {
 };
 
 /**
- * Saves text as a file. Returns false if the browser refuses (for example a
- * sandboxed iframe without download permission), so the caller can fall back.
- */
-export const downloadText = function (text, filename, doc = document) {
-  try {
-    var blob = new Blob(['﻿' + text], {type: 'text/csv;charset=utf-8'});
-    return downloadBlob(blob, filename, doc);
-  } catch (err) {
-    return false;
-  }
-};
-
-export const downloadBlob = function (blob, filename, doc = document) {
-  try {
-    var url = URL.createObjectURL(blob);
-    var link = doc.createElement('a');
-    link.href = url;
-    link.download = filename;
-    link.style.display = 'none';
-    doc.body.appendChild(link);
-    link.click();
-    doc.body.removeChild(link);
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-    return true;
-  } catch (err) {
-    return false;
-  }
-};
-
-const XLSX_TYPE =
-  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
-
-/**
- * Reads a rendered table into spreadsheet cells. Merged cells stay merged,
- * subtotal, total and running total rows are bold, and numbers stay numbers
- * when Excel would show them exactly as the table does (Looker value formats
- * are Excel syntax); anything else is exported as the text shown.
+ * Reads a rendered table into cells for a formatted copy. Merged cells keep
+ * their spans, headers and subtotal, total and running total rows are marked,
+ * and numbers stay numbers when Excel would show them exactly as the table
+ * does (Looker value formats are Excel syntax); anything else is the text shown.
  * @param {HTMLTableElement} table
  * @param {function} valueFormatFor - colid => the column's value format
- * @returns {{rows: object[][], merges: object[], headerRows: number}}
+ * @returns {object[][]} rows of cells; cells covered by a merge are {covered}
  */
 export const tableToSheet = function (table, valueFormatFor = () => '') {
+  var rows = tableToMatrix(table).map(row => row.map(() => ({covered: true})));
   var texts = tableToMatrix(table);
-  var rows = texts.map(row => row.map(text => ({text})));
-  var merges = [];
   var filled = [];
   Array.from(table.querySelectorAll('tr')).forEach((tr, r) => {
     filled[r] = filled[r] || [];
@@ -150,18 +109,19 @@ export const tableToSheet = function (table, valueFormatFor = () => '') {
         filled[r + i] = filled[r + i] || [];
         for (var j = 0; j < colspan; j++) {
           filled[r + i][c + j] = true;
-          // Only the top left cell of a merge holds the value
-          if (i || j) rows[r + i][c + j] = {text: ''};
         }
       }
-      if (rowspan > 1 || colspan > 1) {
-        merges.push({r, c, rowspan, colspan});
-      }
-      var out = rows[r][c];
-      out.bold = cell.tagName === 'TH' || cell.classList.contains('total');
+      var out = {
+        text: texts[r][c],
+        rowspan,
+        colspan,
+        header: cell.tagName === 'TH',
+        total: cell.classList.contains('total'),
+        align: cell.style.textAlign,
+      };
       var datum = cell.__data__;
       if (
-        cell.tagName === 'TD' &&
+        !out.header &&
         datum &&
         typeof datum.value === 'number' &&
         Number.isFinite(datum.value)
@@ -174,14 +134,11 @@ export const tableToSheet = function (table, valueFormatFor = () => '') {
           out.format = format;
         }
       }
+      rows[r][c] = out;
       c += colspan;
     });
   });
-  return {
-    rows,
-    merges,
-    headerRows: table.querySelectorAll('thead tr').length,
-  };
+  return rows;
 };
 
 const formatsAs = function (format, value, text) {
@@ -202,323 +159,128 @@ const guessFormat = function (text) {
   return (match[1] ? '#,##0' : '0') + fraction;
 };
 
-const escapeXml = function (value) {
-  // Control characters are not allowed in XML
-  return (
-    String(value)
-      // eslint-disable-next-line no-control-regex
-      .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, '')
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-  );
+const escapeHtml = function (value) {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 };
 
-const columnName = function (index) {
-  var name = '';
-  for (var n = index + 1; n > 0; n = Math.floor((n - 1) / 26)) {
-    name = String.fromCharCode(65 + ((n - 1) % 26)) + name;
-  }
-  return name;
+// Excel reads a cell's number format from the mso-number-format style. Quoted
+// text in the format ("£") is rewritten with Excel's other escape (\£), then
+// punctuation is CSS escaped the way Excel writes it in its own HTML
+const msoNumberFormat = function (format) {
+  var excel = format.replace(/"([^"]*)"/g, (_, literal) =>
+    Array.from(literal)
+      .map(ch => '\\' + ch)
+      .join('')
+  );
+  var css = Array.from(excel)
+    .map(ch => (/[A-Za-z0-9\u0080-\uffff]/.test(ch) ? ch : '\\' + ch))
+    .join('');
+  return 'mso-number-format:"' + css + '"';
 };
 
 /**
- * Builds the files of a one sheet .xlsx workbook from tableToSheet output.
- * Header rows are frozen, as in the table.
- * @returns {Object<string, string>} path in the zip => XML
+ * Builds the HTML table Excel and Sheets paste as formatted cells: bold
+ * headers and totals with rules above and below, merged headers, numbers at
+ * full precision in their format, and text kept as text so labels aren't
+ * turned into dates.
  */
-export const sheetToXlsxFiles = function (sheet) {
-  // One style per (format, bold) pair; style 0 is the default
-  var numFmts = [];
-  var styles = [{numFmtId: 0, bold: false}];
-  var styleFor = function (format, bold) {
-    var numFmtId = 0;
-    if (format && format !== 'General') {
-      var f = numFmts.indexOf(format);
-      if (f < 0) f = numFmts.push(format) - 1;
-      numFmtId = 164 + f;
-    }
-    var s = styles.findIndex(x => x.numFmtId === numFmtId && x.bold === bold);
-    return s >= 0 ? s : styles.push({numFmtId, bold}) - 1;
-  };
-
-  var widths = [];
-  var sheetRows = sheet.rows
-    .map((row, r) => {
+export const sheetToHtml = function (rows) {
+  var border = '.5pt solid #000000';
+  var body = rows
+    .map(row => {
       var cells = row
-        .map((cell, c) => {
-          widths[c] = Math.max(
-            widths[c] || 8,
-            Math.min(cell.text.length + 2, 50)
+        .filter(cell => !cell.covered)
+        .map(cell => {
+          var tag = cell.header ? 'th' : 'td';
+          var style = [];
+          if (cell.header || cell.total) style.push('font-weight:700');
+          if (cell.header) style.push('border-bottom:' + border);
+          if (cell.total) style.push('border-top:' + border);
+          if (cell.align) style.push('text-align:' + cell.align);
+          style.push(
+            cell.value !== undefined
+              ? msoNumberFormat(cell.format)
+              : msoNumberFormat('@')
           );
-          var ref = columnName(c) + (r + 1);
-          var s = styleFor(cell.format, Boolean(cell.bold));
-          var attrs = ' r="' + ref + '"' + (s ? ' s="' + s + '"' : '');
-          if (cell.value !== undefined) {
-            return '<c' + attrs + '><v>' + cell.value + '</v></c>';
-          }
-          if (cell.text === '') return s ? '<c' + attrs + '/>' : '';
+          var span =
+            (cell.rowspan > 1 ? ' rowspan="' + cell.rowspan + '"' : '') +
+            (cell.colspan > 1 ? ' colspan="' + cell.colspan + '"' : '');
+          // Excel takes the exact value from x:num, as in its own copied HTML;
+          // Sheets ignores it and reads the formatted text
+          var num =
+            cell.value !== undefined ? ' x:num="' + cell.value + '"' : '';
           return (
-            '<c' +
-            attrs +
-            ' t="inlineStr"><is><t xml:space="preserve">' +
-            escapeXml(cell.text) +
-            '</t></is></c>'
+            '<' +
+            tag +
+            span +
+            num +
+            // Single quoted, so quotes in the format stay literal as Excel writes them
+            " style='" +
+            style.join(';').replace(/&/g, '&amp;').replace(/'/g, '&#39;') +
+            "'>" +
+            escapeHtml(cell.text) +
+            '</' +
+            tag +
+            '>'
           );
         })
         .join('');
-      return '<row r="' + (r + 1) + '">' + cells + '</row>';
+      return '<tr>' + cells + '</tr>';
     })
     .join('');
-
-  var pane = sheet.headerRows
-    ? '<pane ySplit="' +
-      sheet.headerRows +
-      '" topLeftCell="A' +
-      (sheet.headerRows + 1) +
-      '" activePane="bottomLeft" state="frozen"/>'
-    : '';
-  var cols = widths.length
-    ? '<cols>' +
-      widths
-        .map(
-          (w, i) =>
-            '<col min="' +
-            (i + 1) +
-            '" max="' +
-            (i + 1) +
-            '" width="' +
-            w +
-            '" customWidth="1"/>'
-        )
-        .join('') +
-      '</cols>'
-    : '';
-  var mergeCells = sheet.merges.length
-    ? '<mergeCells count="' +
-      sheet.merges.length +
-      '">' +
-      sheet.merges
-        .map(
-          m =>
-            '<mergeCell ref="' +
-            columnName(m.c) +
-            (m.r + 1) +
-            ':' +
-            columnName(m.c + m.colspan - 1) +
-            (m.r + m.rowspan) +
-            '"/>'
-        )
-        .join('') +
-      '</mergeCells>'
-    : '';
-
-  var ns = 'http://schemas.openxmlformats.org/';
-  var head = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n';
-  return {
-    '[Content_Types].xml':
-      head +
-      '<Types xmlns="' +
-      ns +
-      'package/2006/content-types">' +
-      '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>' +
-      '<Default Extension="xml" ContentType="application/xml"/>' +
-      '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>' +
-      '<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>' +
-      '<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>' +
-      '</Types>',
-    '_rels/.rels':
-      head +
-      '<Relationships xmlns="' +
-      ns +
-      'package/2006/relationships">' +
-      '<Relationship Id="rId1" Type="' +
-      ns +
-      'officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>' +
-      '</Relationships>',
-    'xl/workbook.xml':
-      head +
-      '<workbook xmlns="' +
-      ns +
-      'spreadsheetml/2006/main" xmlns:r="' +
-      ns +
-      'officeDocument/2006/relationships">' +
-      '<sheets><sheet name="Report" sheetId="1" r:id="rId1"/></sheets>' +
-      '</workbook>',
-    'xl/_rels/workbook.xml.rels':
-      head +
-      '<Relationships xmlns="' +
-      ns +
-      'package/2006/relationships">' +
-      '<Relationship Id="rId1" Type="' +
-      ns +
-      'officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>' +
-      '<Relationship Id="rId2" Type="' +
-      ns +
-      'officeDocument/2006/relationships/styles" Target="styles.xml"/>' +
-      '</Relationships>',
-    'xl/styles.xml':
-      head +
-      '<styleSheet xmlns="' +
-      ns +
-      'spreadsheetml/2006/main">' +
-      (numFmts.length
-        ? '<numFmts count="' +
-          numFmts.length +
-          '">' +
-          numFmts
-            .map(
-              (f, i) =>
-                '<numFmt numFmtId="' +
-                (164 + i) +
-                '" formatCode="' +
-                escapeXml(f) +
-                '"/>'
-            )
-            .join('') +
-          '</numFmts>'
-        : '') +
-      '<fonts count="2"><font><sz val="11"/><name val="Calibri"/></font>' +
-      '<font><b/><sz val="11"/><name val="Calibri"/></font></fonts>' +
-      '<fills count="2"><fill><patternFill patternType="none"/></fill>' +
-      '<fill><patternFill patternType="gray125"/></fill></fills>' +
-      '<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>' +
-      '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>' +
-      '<cellXfs count="' +
-      styles.length +
-      '">' +
-      styles
-        .map(
-          x =>
-            '<xf numFmtId="' +
-            x.numFmtId +
-            '" fontId="' +
-            (x.bold ? 1 : 0) +
-            '" fillId="0" borderId="0" xfId="0"' +
-            (x.numFmtId ? ' applyNumberFormat="1"' : '') +
-            (x.bold ? ' applyFont="1"' : '') +
-            '/>'
-        )
-        .join('') +
-      '</cellXfs>' +
-      '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>' +
-      '</styleSheet>',
-    'xl/worksheets/sheet1.xml':
-      head +
-      '<worksheet xmlns="' +
-      ns +
-      'spreadsheetml/2006/main">' +
-      '<sheetViews><sheetView workbookViewId="0">' +
-      pane +
-      '</sheetView></sheetViews>' +
-      cols +
-      '<sheetData>' +
-      sheetRows +
-      '</sheetData>' +
-      mergeCells +
-      '</worksheet>',
-  };
-};
-
-const CRC_TABLE = Array.from({length: 256}, (_, n) => {
-  var c = n;
-  for (var k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
-  return c >>> 0;
-});
-
-const crc32 = function (bytes) {
-  var crc = 0xffffffff;
-  for (var i = 0; i < bytes.length; i++) {
-    crc = CRC_TABLE[(crc ^ bytes[i]) & 0xff] ^ (crc >>> 8);
-  }
-  return (crc ^ 0xffffffff) >>> 0;
+  return (
+    '<html xmlns:x="urn:schemas-microsoft-com:office:excel">' +
+    '<head><meta charset="utf-8"></head><body>' +
+    '<table style="border-collapse:collapse;font-family:Calibri,sans-serif;font-size:11pt">' +
+    body +
+    '</table></body></html>'
+  );
 };
 
 /**
- * Packs files into an uncompressed zip, which is all an .xlsx needs, so the
- * vis carries no zip or spreadsheet library.
- * @param {Object<string, string>} files - path => text
- * @returns {Uint8Array}
+ * Copies a formatted table with plain text alongside, for apps that don't take
+ * HTML. Tries the copy event first (works in Looker's vis iframe), then the
+ * async Clipboard API, then plain text only.
+ * @returns {Promise<boolean>} whether the copy succeeded
  */
-export const zipFiles = function (files) {
-  var encoder = new TextEncoder();
-  var local = [];
-  var central = [];
-  var offset = 0;
-  var header = function (size, fields) {
-    var bytes = new Uint8Array(size);
-    var view = new DataView(bytes.buffer);
-    fields.forEach(([at, value, width]) =>
-      width === 4
-        ? view.setUint32(at, value, true)
-        : view.setUint16(at, value, true)
-    );
-    return bytes;
+export const copyRich = async function (html, text, doc = document) {
+  var copied = false;
+  var onCopy = event => {
+    event.clipboardData.setData('text/html', html);
+    event.clipboardData.setData('text/plain', text);
+    event.preventDefault();
+    copied = true;
   };
-  Object.keys(files).forEach(path => {
-    var name = encoder.encode(path);
-    var data = encoder.encode(files[path]);
-    var crc = crc32(data);
-    // version 2.0, stored, date 1980-01-01
-    var common = [
-      [0, 20, 2],
-      [2, 0, 2],
-      [4, 0, 2],
-      [6, 0, 2],
-      [8, 0x21, 2],
-      [10, crc, 4],
-      [14, data.length, 4],
-      [18, data.length, 4],
-      [22, name.length, 2],
-      [24, 0, 2],
-    ];
-    local.push(
-      header(
-        30,
-        [[0, 0x04034b50, 4]].concat(common.map(([at, v, w]) => [at + 4, v, w]))
-      ),
-      name,
-      data
-    );
-    central.push(
-      header(
-        46,
-        [
-          [0, 0x02014b50, 4],
-          [4, 20, 2],
-        ]
-          .concat(common.map(([at, v, w]) => [at + 6, v, w]))
-          .concat([[42, offset, 4]])
-      ),
-      name
-    );
-    offset += 30 + name.length + data.length;
-  });
-  var centralSize = central.reduce((n, part) => n + part.length, 0);
-  var count = Object.keys(files).length;
-  var end = header(22, [
-    [0, 0x06054b50, 4],
-    [8, count, 2],
-    [10, count, 2],
-    [12, centralSize, 4],
-    [16, offset, 4],
-  ]);
-  var parts = local.concat(central, [end]);
-  var out = new Uint8Array(parts.reduce((n, part) => n + part.length, 0));
-  var at = 0;
-  parts.forEach(part => {
-    out.set(part, at);
-    at += part.length;
-  });
-  return out;
-};
-
-export const downloadXlsx = function (sheet, filename, doc = document) {
+  doc.addEventListener('copy', onCopy);
   try {
-    var blob = new Blob([zipFiles(sheetToXlsxFiles(sheet))], {type: XLSX_TYPE});
-    return downloadBlob(blob, filename, doc);
+    doc.execCommand('copy');
   } catch (err) {
-    return false;
+    // fall through to the Clipboard API
+  } finally {
+    doc.removeEventListener('copy', onCopy);
   }
+  if (copied) return true;
+  try {
+    if (
+      navigator.clipboard &&
+      navigator.clipboard.write &&
+      typeof ClipboardItem !== 'undefined'
+    ) {
+      await navigator.clipboard.write([
+        new ClipboardItem({
+          'text/html': new Blob([html], {type: 'text/html'}),
+          'text/plain': new Blob([text], {type: 'text/plain'}),
+        }),
+      ]);
+      return true;
+    }
+  } catch (err) {
+    // fall back to plain text
+  }
+  return copyText(text, doc);
 };

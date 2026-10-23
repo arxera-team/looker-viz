@@ -6,11 +6,9 @@
 import {VisPluginTableModel} from './vis_table_plugin';
 import * as d3 from './d3loader';
 import {
-  copyText,
-  downloadText,
-  downloadXlsx,
-  matrixToCsv,
+  copyRich,
   matrixToTsv,
+  sheetToHtml,
   tableToMatrix,
   tableToSheet,
 } from './table_export';
@@ -115,8 +113,9 @@ const buildReportTable = async function (
     };
 
     // Looker's downloads use the query results, so rows the table adds
-    // (subtotals, running totals) can only be exported from here. Not drawn
-    // when Looker renders the tile for a PDF or image download.
+    // (subtotals, running totals) can only be exported from here. Its vis
+    // iframe blocks file downloads, so the table is copied for pasting into
+    // Excel. Not drawn when Looker renders the tile for a PDF or image.
     if (dataTable.exportButtons && !details?.print) {
       var toolbar = d3
         .select(element)
@@ -127,54 +126,25 @@ const buildReportTable = async function (
         .style('font-size', '11px')
         .style('margin-bottom', '4px');
       var status = toolbar.append('span').style('margin-right', '8px');
-      var exportMatrix = () =>
-        tableToMatrix(element.querySelector('#reportTable'));
-      var copyTable = async () => {
-        var copied = await copyText(matrixToTsv(exportMatrix()));
-        status.text(copied ? 'Copied' : 'Copy blocked by the browser');
-      };
       toolbar
         .append('button')
         .attr('id', 'copyTable')
         .text('Copy table')
-        .on('click', copyTable);
-      // Looker's tile frame can block downloads without an error, so say
-      // what to do if no file appears
-      var afterDownload = async saved => {
-        if (saved) {
-          status.text('If no file appears, use Copy table');
-        } else {
-          await copyTable();
-        }
-      };
-      toolbar
-        .append('button')
-        .attr('id', 'downloadTable')
-        .style('margin-left', '4px')
-        .text('Download CSV')
-        .on('click', () =>
-          afterDownload(
-            downloadText(matrixToCsv(exportMatrix()), 'report_table.csv')
-          )
-        );
-      toolbar
-        .append('button')
-        .attr('id', 'downloadXlsx')
-        .style('margin-left', '4px')
-        .text('Download Excel')
-        .on('click', () =>
-          afterDownload(
-            downloadXlsx(
-              tableToSheet(
-                element.querySelector('#reportTable'),
-                colid =>
-                  dataTable.getColumnById(colid).modelField?.value_format ||
-                  '#,##0'
-              ),
-              'report_table.xlsx'
-            )
-          )
-        );
+        .on('click', async () => {
+          var tableEl = element.querySelector('#reportTable');
+          var sheet = tableToSheet(
+            tableEl,
+            colid =>
+              dataTable.getColumnById(colid).modelField?.value_format || '#,##0'
+          );
+          var copied = await copyRich(
+            sheetToHtml(sheet),
+            matrixToTsv(tableToMatrix(tableEl))
+          );
+          status.text(
+            copied ? 'Copied, paste into Excel' : 'Copy blocked by the browser'
+          );
+        });
     }
 
     var table = d3

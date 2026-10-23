@@ -2,21 +2,14 @@
  * @jest-environment jsdom
  */
 
-import {TextEncoder} from 'util';
 import {
+  copyRich,
   copyText,
-  downloadText,
-  downloadXlsx,
-  matrixToCsv,
   matrixToTsv,
-  sheetToXlsxFiles,
+  sheetToHtml,
   tableToMatrix,
   tableToSheet,
-  zipFiles,
 } from './table_export';
-
-// jsdom has no TextEncoder; browsers do
-global.TextEncoder = TextEncoder;
 
 const buildTable = html => {
   const table = document.createElement('table');
@@ -52,48 +45,12 @@ describe('tableToMatrix', () => {
 });
 
 describe('text formats', () => {
-  test('CSV quotes commas, quotes and new lines', () => {
-    expect(
-      matrixToCsv([
-        ['Line', 'Amount'],
-        ['Rent, net', '1,000 RON'],
-        ['Say "hi"', 'a\nb'],
-      ])
-    ).toBe('Line,Amount\r\n"Rent, net","1,000 RON"\r\n"Say ""hi""","a\nb"');
-  });
-
   test('TSV flattens tabs and new lines inside cells', () => {
     expect(matrixToTsv([['a\tb', 'c\nd']])).toBe('a b\tc d');
   });
 });
 
-describe('copy and download', () => {
-  test('copy falls back to execCommand when the Clipboard API is missing', async () => {
-    const original = navigator.clipboard;
-    Object.defineProperty(navigator, 'clipboard', {
-      value: undefined,
-      configurable: true,
-    });
-    document.execCommand = jest.fn(() => true);
-    await expect(copyText('x')).resolves.toBe(true);
-    expect(document.execCommand).toHaveBeenCalledWith('copy');
-    Object.defineProperty(navigator, 'clipboard', {
-      value: original,
-      configurable: true,
-    });
-  });
-
-  test('download reports failure instead of throwing', () => {
-    const create = URL.createObjectURL;
-    URL.createObjectURL = () => {
-      throw new Error('blocked');
-    };
-    expect(downloadText('a,b', 'x.csv')).toBe(false);
-    URL.createObjectURL = create;
-  });
-});
-
-describe('Excel export', () => {
+describe('formatted copy', () => {
   // Cells carry their data the way d3 binds it on the rendered table
   const bind = (table, data) => {
     table.querySelectorAll('td').forEach((td, i) => {
@@ -109,8 +66,8 @@ describe('Excel export', () => {
           <tr><th>Rent</th><th>Yield</th></tr>
         </thead>
         <tbody>
-          <tr><td>Asset A</td><td>1,250</td><td>5.1%</td></tr>
-          <tr><td class="total">NOI</td><td class="total">‑8</td><td class="total">n/a</td></tr>
+          <tr><td>Asset A</td><td style="text-align: right">£1,250</td><td>5.1%</td></tr>
+          <tr><td class="total">NOI</td><td class="total">(£8)</td><td class="total">n/a</td></tr>
         </tbody>`),
       [
         {value: 'Asset A'},
@@ -121,32 +78,38 @@ describe('Excel export', () => {
         {value: 3, colid: 'yield'},
       ]
     );
-  const formats = {rent: '#,##0', yield: '0.0%'};
+  const formats = {rent: '"£"#,##0;("£"#,##0)', yield: '0.0%'};
 
-  test('keeps merges, bold totals and numbers in their Looker format', () => {
-    const sheet = tableToSheet(plTable(), colid => formats[colid]);
-    expect(sheet.headerRows).toBe(2);
-    expect(sheet.merges).toEqual([
-      {r: 0, c: 0, rowspan: 2, colspan: 1},
-      {r: 0, c: 1, rowspan: 1, colspan: 2},
-    ]);
-    expect(sheet.rows[0].map(c => c.text)).toEqual(['Line', '2026', '']);
-    expect(sheet.rows[1][0].text).toBe('');
-    expect(sheet.rows[2][1]).toEqual(
-      expect.objectContaining({value: 1250, format: '#,##0', bold: false})
+  test('keeps merges, marks headers and totals, keeps numbers in their Looker format', () => {
+    const rows = tableToSheet(plTable(), colid => formats[colid]);
+    expect(rows[0][0]).toEqual(
+      expect.objectContaining({text: 'Line', rowspan: 2, header: true})
     );
-    expect(sheet.rows[2][2]).toEqual(
+    expect(rows[0][1]).toEqual(
+      expect.objectContaining({text: '2026', colspan: 2})
+    );
+    expect(rows[0][2]).toEqual({covered: true});
+    expect(rows[1][0]).toEqual({covered: true});
+    expect(rows[2][1]).toEqual(
+      expect.objectContaining({
+        value: 1250,
+        format: formats.rent,
+        total: false,
+        align: 'right',
+      })
+    );
+    expect(rows[2][2]).toEqual(
       expect.objectContaining({value: 0.051, format: '0.0%'})
     );
-    expect(sheet.rows[3][1]).toEqual(
-      expect.objectContaining({value: -8, bold: true})
+    expect(rows[3][1]).toEqual(
+      expect.objectContaining({value: -8, total: true})
     );
   });
 
-  test('exports the text shown when Excel would display the number differently', () => {
-    const sheet = tableToSheet(plTable(), colid => formats[colid]);
-    expect(sheet.rows[3][2].value).toBeUndefined();
-    expect(sheet.rows[3][2].text).toBe('n/a');
+  test('keeps the text shown when Excel would display the number differently', () => {
+    const rows = tableToSheet(plTable(), colid => formats[colid]);
+    expect(rows[3][2].value).toBeUndefined();
+    expect(rows[3][2].text).toBe('n/a');
   });
 
   test('falls back to a plain number format when the column has none', () => {
@@ -154,52 +117,87 @@ describe('Excel export', () => {
       buildTable('<tbody><tr><td>1,234.50</td><td>£9</td></tr></tbody>'),
       [{value: 1234.5}, {value: 9}]
     );
-    const sheet = tableToSheet(table);
-    expect(sheet.rows[0][0]).toEqual(
+    const rows = tableToSheet(table);
+    expect(rows[0][0]).toEqual(
       expect.objectContaining({value: 1234.5, format: '#,##0.00'})
     );
-    expect(sheet.rows[0][1].value).toBeUndefined();
+    expect(rows[0][1].value).toBeUndefined();
   });
 
-  test('writes a workbook with frozen headers, merges and styles', () => {
-    const files = sheetToXlsxFiles(
-      tableToSheet(plTable(), colid => formats[colid])
+  test('HTML has merges, bold headers and totals, Excel formats and text cells', () => {
+    const html = sheetToHtml(tableToSheet(plTable(), colid => formats[colid]));
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    const rows = doc.querySelectorAll('tr');
+    expect(rows[0].children).toHaveLength(2);
+    expect(rows[0].children[0].getAttribute('rowspan')).toBe('2');
+    expect(rows[0].children[1].getAttribute('colspan')).toBe('2');
+    expect(rows[1].children).toHaveLength(2);
+    const header = rows[0].children[0].getAttribute('style');
+    expect(header).toContain('font-weight:700');
+    expect(header).toContain('mso-number-format:"\\@"');
+    const rent = rows[2].children[1];
+    expect(rent.textContent).toBe('£1,250');
+    expect(rent.getAttribute('x:num')).toBe('1250');
+    // "£" becomes Excel's \£ escape, then punctuation is CSS escaped
+    expect(rent.getAttribute('style')).toContain(
+      String.raw`mso-number-format:"\\£\#\,\#\#0\;\(\\£\#\,\#\#0\)"`
     );
-    const sheetXml = files['xl/worksheets/sheet1.xml'];
-    expect(sheetXml).toContain('ySplit="2"');
-    expect(sheetXml).toContain('<mergeCell ref="A1:A2"/>');
-    expect(sheetXml).toContain('<mergeCell ref="B1:C1"/>');
-    expect(sheetXml).toMatch(/<c r="B3" s="\d+"><v>1250<\/v><\/c>/);
-    expect(files['xl/styles.xml']).toContain('formatCode="0.0%"');
-    expect(files['xl/styles.xml']).toContain('<b/>');
+    expect(rent.getAttribute('style')).toContain('text-align:right');
+    expect(rows[2].children[0].getAttribute('style')).not.toContain(
+      'font-weight'
+    );
+    const noi = rows[3].children[0].getAttribute('style');
+    expect(noi).toContain('font-weight:700');
+    expect(noi).toContain('border-top');
+    expect(rows[3].children[2].textContent).toBe('n/a');
+    expect(rows[3].children[2].hasAttribute('x:num')).toBe(false);
   });
 
-  test('escapes text for XML', () => {
-    const files = sheetToXlsxFiles({
-      rows: [[{text: 'A & B <c>'}]],
-      merges: [],
-      headerRows: 0,
+  test('HTML escapes cell text', () => {
+    const html = sheetToHtml([[{text: "A & B <c> 'd'"}]]);
+    expect(html).toContain('A &amp; B &lt;c&gt; &#39;d&#39;');
+  });
+});
+
+describe('copy', () => {
+  test('copy falls back to execCommand when the Clipboard API is missing', async () => {
+    const original = navigator.clipboard;
+    Object.defineProperty(navigator, 'clipboard', {
+      value: undefined,
+      configurable: true,
     });
-    expect(files['xl/worksheets/sheet1.xml']).toContain('A &amp; B &lt;c&gt;');
+    document.execCommand = jest.fn(() => true);
+    await expect(copyText('x')).resolves.toBe(true);
+    expect(document.execCommand).toHaveBeenCalledWith('copy');
+    Object.defineProperty(navigator, 'clipboard', {
+      value: original,
+      configurable: true,
+    });
   });
 
-  test('zips files with valid headers', () => {
-    const zip = zipFiles({'a.txt': 'hello'});
-    const view = new DataView(zip.buffer);
-    expect(view.getUint32(0, true)).toBe(0x04034b50);
-    // CRC-32 of 'hello'
-    expect(view.getUint32(14, true)).toBe(0x3610a686);
-    expect(view.getUint32(zip.length - 22, true)).toBe(0x06054b50);
+  test('formatted copy puts HTML and plain text on the clipboard', async () => {
+    const data = {};
+    document.execCommand = jest.fn(() => {
+      const event = new Event('copy', {cancelable: true});
+      event.clipboardData = {setData: (type, value) => (data[type] = value)};
+      document.dispatchEvent(event);
+      return true;
+    });
+    await expect(copyRich('<table></table>', 'a\tb')).resolves.toBe(true);
+    expect(data).toEqual({
+      'text/html': '<table></table>',
+      'text/plain': 'a\tb',
+    });
   });
 
-  test('download reports failure instead of throwing', () => {
-    const create = URL.createObjectURL;
-    URL.createObjectURL = () => {
-      throw new Error('blocked');
-    };
-    expect(downloadXlsx({rows: [], merges: [], headerRows: 0}, 'x.xlsx')).toBe(
-      false
-    );
-    URL.createObjectURL = create;
+  test('formatted copy falls back to plain text when the copy event is blocked', async () => {
+    let written = null;
+    document.execCommand = jest.fn(() => false);
+    Object.defineProperty(navigator, 'clipboard', {
+      value: {writeText: async text => (written = text)},
+      configurable: true,
+    });
+    await expect(copyRich('<table></table>', 'a\tb')).resolves.toBe(true);
+    expect(written).toBe('a\tb');
   });
 });

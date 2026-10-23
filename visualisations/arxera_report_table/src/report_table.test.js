@@ -399,7 +399,7 @@ describe('report_table visualization plugin', () => {
       expect(element.querySelector('#exportToolbar')).toBeNull();
     });
 
-    test('copy the table as shown, running totals included', async () => {
+    test('copy the table as shown, formatted, running totals included', async () => {
       await vizPlugin.updateAsync(
         plData,
         element,
@@ -415,31 +415,36 @@ describe('report_table visualization plugin', () => {
         mockDone
       );
       expect(element.querySelector('#exportToolbar')).not.toBeNull();
-      let copied = '';
-      Object.defineProperty(navigator, 'clipboard', {
-        value: {writeText: async text => (copied = text)},
-        configurable: true,
+      expect(element.querySelector('#downloadTable')).toBeNull();
+      const clipboard = {};
+      document.execCommand = jest.fn(() => {
+        const event = new Event('copy', {cancelable: true});
+        event.clipboardData = {
+          setData: (type, value) => (clipboard[type] = value),
+        };
+        document.dispatchEvent(event);
+        return true;
       });
       element.querySelector('#copyTable').dispatchEvent(new Event('click'));
       await new Promise(resolve => setTimeout(resolve, 0));
-      const lines = copied.split('\n');
+      const lines = clipboard['text/plain'].split('\n');
       expect(lines.some(l => l.includes('NOI') && l.includes('92'))).toBe(true);
       expect(lines.some(l => l.includes('Rent') && l.includes('100'))).toBe(
         true
       );
-    });
-
-    test('include an Excel download', async () => {
-      await vizPlugin.updateAsync(
-        plData,
-        element,
-        {theme: 'traditional', exportButtons: true},
-        plQuery,
-        {},
-        mockDone
+      const doc = new DOMParser().parseFromString(
+        clipboard['text/html'],
+        'text/html'
       );
-      expect(element.querySelector('#downloadXlsx').textContent).toBe(
-        'Download Excel'
+      const noi = Array.from(doc.querySelectorAll('tr')).find(tr =>
+        tr.textContent.includes('NOI')
+      );
+      expect(noi.textContent).toContain('92');
+      expect(noi.firstElementChild.getAttribute('style')).toContain(
+        'font-weight:700'
+      );
+      expect(element.querySelector('#exportToolbar').textContent).toContain(
+        'Copied, paste into Excel'
       );
     });
 
