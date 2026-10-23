@@ -7,6 +7,7 @@ import {
   copyText,
   matrixToTsv,
   sheetToHtml,
+  sheetToMatrix,
   tableToMatrix,
   tableToSheet,
 } from './table_export';
@@ -72,135 +73,136 @@ describe('formatted copy', () => {
     });
     return table;
   };
+  // Section merged down over its lines, as the tile draws it, and a pivot
+  // header merged across its measures
   const plTable = () =>
     bind(
       buildTable(`
         <thead>
-          <tr><th rowspan="2">Line</th><th colspan="2">2026</th></tr>
-          <tr><th>Rent</th><th>Yield</th></tr>
+          <tr><th rowspan="2">Section</th><th rowspan="2">P&amp;L Line</th><th colspan="2">2026</th></tr>
+          <tr><th>Actual</th><th>Yield</th></tr>
         </thead>
         <tbody>
-          <tr><td>Asset A</td><td style="text-align: right">£1,250</td><td>5.1%</td></tr>
-          <tr><td class="total">NOI</td><td class="total">(£8)</td><td class="total">n/a</td></tr>
+          <tr><td rowspan="2">Rental Income</td><td>Rent</td><td style="text-align: right">2,618,497 RON</td><td>5.1%</td></tr>
+          <tr><td>Discounts</td><td>-755,949 RON</td><td>5.3%</td></tr>
+          <tr><td class="total" colspan="2">Rental Income Total</td><td class="total">1,862,548</td><td class="total">n/a</td></tr>
         </tbody>`),
       [
-        {value: 'Asset A'},
-        {value: 1250, colid: 'rent'},
+        {value: 'Rental Income'},
+        {value: 'Rent'},
+        {value: 2618497.4, colid: 'actual'},
         {value: 0.051, colid: 'yield'},
-        {value: 'NOI'},
-        {value: -8, colid: 'rent'},
+        {value: 'Discounts'},
+        {value: -755949, colid: 'actual'},
+        {value: 0.053, colid: 'yield'},
+        {value: 'Rental Income Total'},
+        {value: 1862548.4, colid: 'actual'},
         {value: 3, colid: 'yield'},
       ]
     );
-  const formats = {rent: '"£"#,##0;("£"#,##0)', yield: '0.0%'};
+  const formats = {actual: '', yield: '0.0%'};
+  const texts = rows => rows.map(row => row.map(cell => cell.text));
 
-  test('keeps merges, marks headers and totals, keeps numbers in their Looker format', () => {
+  test('writes merges out cell by cell, so no row shifts', () => {
     const rows = tableToSheet(plTable(), colid => formats[colid]);
-    expect(rows[0][0]).toEqual(
-      expect.objectContaining({text: 'Line', rowspan: 2, header: true})
-    );
-    expect(rows[0][1]).toEqual(
-      expect.objectContaining({text: '2026', colspan: 2})
-    );
-    expect(rows[0][2]).toEqual({covered: true});
-    expect(rows[1][0]).toEqual({covered: true});
-    expect(rows[2][1]).toEqual(
+    expect(texts(rows)).toEqual([
+      ['Section', 'P&L Line', '2026', '2026'],
+      ['Section', 'P&L Line', 'Actual', 'Yield'],
+      ['Rental Income', 'Rent', '2,618,497 RON', '5.1%'],
+      ['Rental Income', 'Discounts', '-755,949 RON', '5.3%'],
+      ['Rental Income Total', '', '1,862,548', 'n/a'],
+    ]);
+    expect(rows.every(row => row.length === 4)).toBe(true);
+  });
+
+  test('marks headers and totals, keeps numbers with their format', () => {
+    const rows = tableToSheet(plTable(), colid => formats[colid]);
+    expect(rows[0][0].header).toBe(true);
+    expect(rows[2][2]).toEqual(
       expect.objectContaining({
-        value: 1250,
-        format: formats.rent,
+        value: 2618497.4,
+        format: '#,##0" RON"',
+        plain: '2,618,497',
         total: false,
         align: 'right',
       })
     );
-    expect(rows[2][2]).toEqual(
-      expect.objectContaining({value: 0.051, format: '0.0%'})
+    expect(rows[3][2]).toEqual(
+      expect.objectContaining({value: -755949, plain: '-755,949'})
     );
-    expect(rows[3][1]).toEqual(
-      expect.objectContaining({value: -8, total: true})
+    expect(rows[2][3]).toEqual(
+      expect.objectContaining({value: 0.051, format: '0.0%', plain: '5.1%'})
+    );
+    expect(rows[4][0].total).toBe(true);
+    expect(rows[4][1]).toEqual({text: '', total: true, header: false});
+    expect(rows[4][2]).toEqual(
+      expect.objectContaining({
+        value: 1862548.4,
+        plain: '1,862,548',
+        total: true,
+      })
     );
   });
 
   test('keeps the text shown when Excel would display the number differently', () => {
     const rows = tableToSheet(plTable(), colid => formats[colid]);
-    expect(rows[3][2].value).toBeUndefined();
-    expect(rows[3][2].text).toBe('n/a');
+    expect(rows[4][3].value).toBeUndefined();
+    expect(rows[4][3].text).toBe('n/a');
   });
 
-  test('splits subtotal labels spanning columns, keeping the total styling', () => {
-    const table = bind(
-      buildTable(`
-        <tbody>
-          <tr><td>Rental Income</td><td>Rent</td><td>10</td></tr>
-          <tr><td class="total" colspan="2">Rental Income Total</td><td class="total">10</td></tr>
-        </tbody>`),
-      [{}, {}, {value: 10, colid: 'a'}, {}, {value: 10, colid: 'a'}]
-    );
-    const rows = tableToSheet(table);
-    expect(rows[1][0]).toEqual(
-      expect.objectContaining({text: 'Rental Income Total', colspan: 1})
-    );
-    expect(rows[1][1]).toEqual({text: '', total: true, header: false});
-    const html = sheetToHtml(rows);
-    expect(html).not.toContain('colspan');
-  });
-
-  test('keeps numbers with a unit or currency around them as numbers', () => {
+  test('reads currency and decimals from the text when the column has no format', () => {
     const table = bind(
       buildTable(
-        '<tbody><tr><td>2,618,497 RON</td><td>-755,949 RON</td><td>0 RON</td><td>-£80</td></tr></tbody>'
+        '<tbody><tr><td>1,234.50</td><td>-£9</td><td>0 RON</td></tr></tbody>'
       ),
-      [{value: 2618497.4}, {value: -755949}, {value: 0}, {value: -80}]
+      [{value: 1234.5}, {value: -9}, {value: 0}]
     );
     const rows = tableToSheet(table, () => '#,##0');
-    expect(rows[0].map(cell => [cell.value, cell.format])).toEqual([
-      [2618497.4, '#,##0" RON"'],
-      [-755949, '#,##0" RON"'],
-      [0, '#,##0" RON"'],
-      [-80, '"£"#,##0'],
+    expect(rows[0].map(cell => [cell.format, cell.plain])).toEqual([
+      ['#,##0.00', '1,234.50'],
+      ['"£"#,##0', '-9'],
+      ['#,##0" RON"', '0'],
     ]);
   });
 
-  test('falls back to a plain number format when the column has none', () => {
-    const table = bind(
-      buildTable('<tbody><tr><td>1,234.50</td><td>£9</td></tr></tbody>'),
-      [{value: 1234.5}, {value: 9}]
-    );
-    const rows = tableToSheet(table);
-    expect(rows[0][0]).toEqual(
-      expect.objectContaining({value: 1234.5, format: '#,##0.00'})
-    );
-    expect(rows[0][1]).toEqual(
-      expect.objectContaining({value: 9, format: '"£"#,##0'})
-    );
+  test('plain text has every cell, amounts as plain numbers', () => {
+    const rows = tableToSheet(plTable(), colid => formats[colid]);
+    expect(matrixToTsv(sheetToMatrix(rows)).split('\n')).toEqual([
+      'Section\tP&L Line\t2026\t2026',
+      'Section\tP&L Line\tActual\tYield',
+      'Rental Income\tRent\t2,618,497\t5.1%',
+      'Rental Income\tDiscounts\t-755,949\t5.3%',
+      'Rental Income Total\t\t1,862,548\tn/a',
+    ]);
   });
 
-  test('HTML has merges, bold headers and totals, Excel formats and text cells', () => {
+  test('HTML has no merges, bold headers and totals, plain numbers and Excel hints', () => {
     const html = sheetToHtml(tableToSheet(plTable(), colid => formats[colid]));
+    expect(html).not.toMatch(/rowspan|colspan/);
     const doc = new DOMParser().parseFromString(html, 'text/html');
-    const rows = doc.querySelectorAll('tr');
-    expect(rows[0].children).toHaveLength(2);
-    expect(rows[0].children[0].getAttribute('rowspan')).toBe('2');
-    expect(rows[0].children[1].getAttribute('colspan')).toBe('2');
-    expect(rows[1].children).toHaveLength(2);
+    const rows = Array.from(doc.querySelectorAll('tr'));
+    expect(rows.map(tr => tr.children.length)).toEqual([4, 4, 4, 4, 4]);
     const header = rows[0].children[0].getAttribute('style');
     expect(header).toContain('font-weight:700');
     expect(header).toContain('mso-number-format:"\\@"');
-    const rent = rows[2].children[1];
-    expect(rent.textContent).toBe('£1,250');
-    expect(rent.getAttribute('x:num')).toBe('1250');
-    // "£" becomes Excel's \£ escape, then punctuation is CSS escaped
-    expect(rent.getAttribute('style')).toContain(
-      String.raw`mso-number-format:"\\£\#\,\#\#0\;\(\\£\#\,\#\#0\)"`
+    expect(rows[3].children[0].textContent).toBe('Rental Income');
+    const amount = rows[2].children[2];
+    expect(amount.textContent).toBe('2,618,497');
+    expect(amount.getAttribute('x:num')).toBe('2618497.4');
+    // " RON" becomes Excel's \ escapes, then punctuation is CSS escaped
+    expect(amount.getAttribute('style')).toContain(
+      String.raw`mso-number-format:"\#\,\#\#0\\\ \\R\\O\\N"`
     );
-    expect(rent.getAttribute('style')).toContain('text-align:right');
+    expect(amount.getAttribute('style')).toContain('text-align:right');
     expect(rows[2].children[0].getAttribute('style')).not.toContain(
       'font-weight'
     );
-    const noi = rows[3].children[0].getAttribute('style');
-    expect(noi).toContain('font-weight:700');
-    expect(noi).toContain('border-top');
-    expect(rows[3].children[2].textContent).toBe('n/a');
-    expect(rows[3].children[2].hasAttribute('x:num')).toBe(false);
+    const total = rows[4].children[0].getAttribute('style');
+    expect(total).toContain('font-weight:700');
+    expect(total).toContain('border-top');
+    expect(rows[4].children[1].getAttribute('style')).toContain('border-top');
+    expect(rows[4].children[3].textContent).toBe('n/a');
+    expect(rows[4].children[3].hasAttribute('x:num')).toBe(false);
   });
 
   test('HTML escapes cell text', () => {

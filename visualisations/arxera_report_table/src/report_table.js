@@ -9,7 +9,7 @@ import {
   copyRich,
   matrixToTsv,
   sheetToHtml,
-  tableToMatrix,
+  sheetToMatrix,
   tableToSheet,
 } from './table_export';
 import themeTraditional from './theme_traditional.css';
@@ -139,7 +139,7 @@ const buildReportTable = async function (
           );
           var copied = await copyRich(
             sheetToHtml(sheet),
-            matrixToTsv(tableToMatrix(tableEl))
+            matrixToTsv(sheetToMatrix(sheet))
           );
           status.text(
             copied ? 'Copied, paste into Excel' : 'Copy blocked by the browser'

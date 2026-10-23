@@ -88,18 +88,19 @@ const execCopy = function (text, doc) {
 };
 
 /**
- * Reads a rendered table into cells for a formatted copy. Header merges and
- * row spans are kept; a body cell spanning columns is split as in
- * tableToMatrix. Headers and subtotal, total and running total rows are marked,
- * and numbers stay numbers when Excel would show them exactly as the table
- * does (Looker value formats are Excel syntax); anything else is the text shown.
+ * Reads a rendered table into cells for a formatted copy. Merges are written
+ * out cell by cell, as in tableToMatrix, since Excel can ignore pasted
+ * rowspan/colspan and shift the row. Headers and subtotal, total and running
+ * total rows are marked, and numbers stay numbers when Excel would show them
+ * exactly as the table does (Looker value formats are Excel syntax), with
+ * plain text Excel reads as that number; anything else is the text shown.
  * @param {HTMLTableElement} table
  * @param {function} valueFormatFor - colid => the column's value format
- * @returns {object[][]} rows of cells; cells covered by a merge are {covered}
+ * @returns {object[][]} rows of cells
  */
 export const tableToSheet = function (table, valueFormatFor = () => '') {
-  var rows = tableToMatrix(table).map(row => row.map(() => ({covered: true})));
   var texts = tableToMatrix(table);
+  var rows = texts.map(() => []);
   var filled = [];
   Array.from(table.querySelectorAll('tr')).forEach((tr, r) => {
     filled[r] = filled[r] || [];
@@ -114,16 +115,8 @@ export const tableToSheet = function (table, valueFormatFor = () => '') {
         parseInt(cell.getAttribute('colspan'), 10) || 1,
         1
       );
-      for (var i = 0; i < rowspan; i++) {
-        filled[r + i] = filled[r + i] || [];
-        for (var j = 0; j < colspan; j++) {
-          filled[r + i][c + j] = true;
-        }
-      }
       var out = {
         text: texts[r][c],
-        rowspan,
-        colspan,
         header: cell.tagName === 'TH',
         total: cell.classList.contains('total'),
         align: cell.style.textAlign,
@@ -141,21 +134,45 @@ export const tableToSheet = function (table, valueFormatFor = () => '') {
         if (format) {
           out.value = datum.value;
           out.format = format;
+          out.plain = plainNumber(datum.value, out.text);
         }
       }
-      if (!out.header && colspan > 1) {
-        out.colspan = 1;
-        for (var k = 0; k < rowspan; k++) {
-          for (var m = 1; m < colspan; m++) {
-            rows[r + k][c + m] = {text: '', total: out.total, header: false};
-          }
+      for (var i = 0; i < rowspan; i++) {
+        filled[r + i] = filled[r + i] || [];
+        rows[r + i] = rows[r + i] || [];
+        for (var j = 0; j < colspan; j++) {
+          filled[r + i][c + j] = true;
+          // A body label spanning columns stays in its first column only
+          rows[r + i][c + j] =
+            j > 0 && !out.header
+              ? {text: '', total: out.total, header: false}
+              : {...out};
         }
       }
-      rows[r][c] = out;
       c += colspan;
     });
   });
-  return rows;
+  var width = texts.length ? texts[0].length : 0;
+  return rows.map(row =>
+    Array.from({length: width}, (_, i) => row[i] || {text: ''})
+  );
+};
+
+// The number as Excel reads it when pasted, whatever it makes of the format:
+// thousands separators and the decimals shown, without text such as ' RON'
+// around it ('5.1%' is kept, as Excel reads percentages)
+const plainNumber = function (value, text) {
+  if (/^-?[\d,.]+%$/.test(text)) return text;
+  var decimals = (/\.(\d+)/.exec(text) || [])[1] || '';
+  return SSF.format(
+    '#,##0' + (decimals ? '.' + '0'.repeat(decimals.length) : ''),
+    value
+  );
+};
+
+// Cell texts of a sheet for the plain text copy, numbers as Excel reads them
+export const sheetToMatrix = function (rows) {
+  return rows.map(row => row.map(cell => cell.plain ?? cell.text));
 };
 
 const formatsAs = function (format, value, text) {
@@ -208,16 +225,16 @@ const msoNumberFormat = function (format) {
 
 /**
  * Builds the HTML table Excel and Sheets paste as formatted cells: bold
- * headers and totals with rules above and below, merged headers, numbers at
- * full precision in their format, and text kept as text so labels aren't
- * turned into dates.
+ * headers and totals with rules above and below, and numbers as plain numbers
+ * Excel reads on its own. Where Excel honours its own hints (x:num, and
+ * mso-number-format, which Chrome may strip), numbers also get full precision
+ * and the column's format, and text stays text so labels aren't made dates.
  */
 export const sheetToHtml = function (rows) {
   var border = '.5pt solid #000000';
   var body = rows
     .map(row => {
       var cells = row
-        .filter(cell => !cell.covered)
         .map(cell => {
           var tag = cell.header ? 'th' : 'td';
           var style = [];
@@ -230,9 +247,6 @@ export const sheetToHtml = function (rows) {
               ? msoNumberFormat(cell.format)
               : msoNumberFormat('@')
           );
-          var span =
-            (cell.rowspan > 1 ? ' rowspan="' + cell.rowspan + '"' : '') +
-            (cell.colspan > 1 ? ' colspan="' + cell.colspan + '"' : '');
           // Excel takes the exact value from x:num, as in its own copied HTML;
           // Sheets ignores it and reads the formatted text
           var num =
@@ -240,13 +254,12 @@ export const sheetToHtml = function (rows) {
           return (
             '<' +
             tag +
-            span +
             num +
             // Single quoted, so quotes in the format stay literal as Excel writes them
             " style='" +
             style.join(';').replace(/&/g, '&amp;').replace(/'/g, '&#39;') +
             "'>" +
-            escapeHtml(cell.text) +
+            escapeHtml(cell.plain ?? cell.text) +
             '</' +
             tag +
             '>'
