@@ -8,9 +8,11 @@ import * as d3 from './d3loader';
 import {
   copyText,
   downloadText,
+  downloadXlsx,
   matrixToCsv,
   matrixToTsv,
   tableToMatrix,
+  tableToSheet,
 } from './table_export';
 import themeTraditional from './theme_traditional.css';
 import themeLooker from './theme_looker.css';
@@ -113,8 +115,9 @@ const buildReportTable = async function (
     };
 
     // Looker's downloads use the query results, so rows the table adds
-    // (subtotals, running totals) can only be exported from here
-    if (dataTable.exportButtons) {
+    // (subtotals, running totals) can only be exported from here. Not drawn
+    // when Looker renders the tile for a PDF or image download.
+    if (dataTable.exportButtons && !details?.print) {
       var toolbar = d3
         .select(element)
         .select('#visContainer')
@@ -135,24 +138,43 @@ const buildReportTable = async function (
         .attr('id', 'copyTable')
         .text('Copy table')
         .on('click', copyTable);
+      // Looker's tile frame can block downloads without an error, so say
+      // what to do if no file appears
+      var afterDownload = async saved => {
+        if (saved) {
+          status.text('If no file appears, use Copy table');
+        } else {
+          await copyTable();
+        }
+      };
       toolbar
         .append('button')
         .attr('id', 'downloadTable')
         .style('margin-left', '4px')
         .text('Download CSV')
-        .on('click', async () => {
-          var saved = downloadText(
-            matrixToCsv(exportMatrix()),
-            'report_table.csv'
-          );
-          // Looker's tile frame can block downloads without an error, so say
-          // what to do if no file appears
-          if (saved) {
-            status.text('If no file appears, use Copy table');
-          } else {
-            await copyTable();
-          }
-        });
+        .on('click', () =>
+          afterDownload(
+            downloadText(matrixToCsv(exportMatrix()), 'report_table.csv')
+          )
+        );
+      toolbar
+        .append('button')
+        .attr('id', 'downloadXlsx')
+        .style('margin-left', '4px')
+        .text('Download Excel')
+        .on('click', () =>
+          afterDownload(
+            downloadXlsx(
+              tableToSheet(
+                element.querySelector('#reportTable'),
+                colid =>
+                  dataTable.getColumnById(colid).modelField?.value_format ||
+                  '#,##0'
+              ),
+              'report_table.xlsx'
+            )
+          )
+        );
     }
 
     var table = d3

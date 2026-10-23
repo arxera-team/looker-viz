@@ -428,5 +428,32 @@ describe('report_table visualization plugin', () => {
         true
       );
     });
+
+    test('include an Excel download', async () => {
+      await vizPlugin.updateAsync(
+        plData,
+        element,
+        {theme: 'traditional', exportButtons: true},
+        plQuery,
+        {},
+        mockDone
+      );
+      expect(element.querySelector('#downloadXlsx').textContent).toBe(
+        'Download Excel'
+      );
+    });
+
+    test('are left out of PDF and image downloads', async () => {
+      await vizPlugin.updateAsync(
+        plData,
+        element,
+        {theme: 'traditional', exportButtons: true},
+        plQuery,
+        {print: true},
+        mockDone
+      );
+      expect(element.querySelector('#reportTable')).not.toBeNull();
+      expect(element.querySelector('#exportToolbar')).toBeNull();
+    });
   });
 });

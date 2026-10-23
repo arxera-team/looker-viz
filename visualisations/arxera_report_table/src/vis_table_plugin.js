@@ -214,7 +214,7 @@ const tableModelCoreOptions = {
     section: 'Table',
     type: 'boolean',
     label:
-      'Copy / Download buttons (exports the table as shown, incl. running totals)',
+      'Copy / Download buttons (CSV and Excel of the table as shown, incl. running totals)',
     default: false,
     order: 12.5,
   },
