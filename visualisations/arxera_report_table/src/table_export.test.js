@@ -38,6 +38,20 @@ describe('tableToMatrix', () => {
     ]);
   });
 
+  test('puts a body label spanning columns in its first column only', () => {
+    const table = buildTable(`
+      <thead><tr><th>Section</th><th>P&amp;L Line</th><th>Actual</th></tr></thead>
+      <tbody>
+        <tr><td>Rental Income</td><td>Rent</td><td>10</td></tr>
+        <tr><td colspan="2">Rental Income Total</td><td>10</td></tr>
+      </tbody>`);
+    expect(tableToMatrix(table)).toEqual([
+      ['Section', 'P&L Line', 'Actual'],
+      ['Rental Income', 'Rent', '10'],
+      ['Rental Income Total', '', '10'],
+    ]);
+  });
+
   test('restores minus signs the display swapped for non-breaking hyphens', () => {
     const table = buildTable('<tbody><tr><td>‑1,250.00</td></tr></tbody>');
     expect(tableToMatrix(table)).toEqual([['-1,250.00']]);
@@ -112,6 +126,40 @@ describe('formatted copy', () => {
     expect(rows[3][2].text).toBe('n/a');
   });
 
+  test('splits subtotal labels spanning columns, keeping the total styling', () => {
+    const table = bind(
+      buildTable(`
+        <tbody>
+          <tr><td>Rental Income</td><td>Rent</td><td>10</td></tr>
+          <tr><td class="total" colspan="2">Rental Income Total</td><td class="total">10</td></tr>
+        </tbody>`),
+      [{}, {}, {value: 10, colid: 'a'}, {}, {value: 10, colid: 'a'}]
+    );
+    const rows = tableToSheet(table);
+    expect(rows[1][0]).toEqual(
+      expect.objectContaining({text: 'Rental Income Total', colspan: 1})
+    );
+    expect(rows[1][1]).toEqual({text: '', total: true, header: false});
+    const html = sheetToHtml(rows);
+    expect(html).not.toContain('colspan');
+  });
+
+  test('keeps numbers with a unit or currency around them as numbers', () => {
+    const table = bind(
+      buildTable(
+        '<tbody><tr><td>2,618,497 RON</td><td>-755,949 RON</td><td>0 RON</td><td>-£80</td></tr></tbody>'
+      ),
+      [{value: 2618497.4}, {value: -755949}, {value: 0}, {value: -80}]
+    );
+    const rows = tableToSheet(table, () => '#,##0');
+    expect(rows[0].map(cell => [cell.value, cell.format])).toEqual([
+      [2618497.4, '#,##0" RON"'],
+      [-755949, '#,##0" RON"'],
+      [0, '#,##0" RON"'],
+      [-80, '"£"#,##0'],
+    ]);
+  });
+
   test('falls back to a plain number format when the column has none', () => {
     const table = bind(
       buildTable('<tbody><tr><td>1,234.50</td><td>£9</td></tr></tbody>'),
@@ -121,7 +169,9 @@ describe('formatted copy', () => {
     expect(rows[0][0]).toEqual(
       expect.objectContaining({value: 1234.5, format: '#,##0.00'})
     );
-    expect(rows[0][1].value).toBeUndefined();
+    expect(rows[0][1]).toEqual(
+      expect.objectContaining({value: 9, format: '"£"#,##0'})
+    );
   });
 
   test('HTML has merges, bold headers and totals, Excel formats and text cells', () => {

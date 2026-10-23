@@ -7,7 +7,9 @@ import SSF from 'ssf';
 
 /**
  * Reads a rendered table into a grid of cell texts, repeating merged cells
- * (rowspan/colspan) so each row stands on its own in a spreadsheet.
+ * so each row stands on its own in a spreadsheet. A body cell spanning
+ * columns (a subtotal or running total label) goes in its first column only,
+ * so the columns it spans keep only their own values (e.g. P&L lines).
  * @param {HTMLTableElement} table
  * @returns {string[][]}
  */
@@ -31,7 +33,7 @@ export const tableToMatrix = function (table) {
       for (var i = 0; i < rowspan; i++) {
         matrix[r + i] = matrix[r + i] || [];
         for (var j = 0; j < colspan; j++) {
-          matrix[r + i][c + j] = text;
+          matrix[r + i][c + j] = j === 0 || cell.tagName === 'TH' ? text : '';
         }
       }
       c += colspan;
@@ -62,6 +64,12 @@ export const copyText = async function (text, doc = document) {
   } catch (err) {
     // fall through to the textarea copy
   }
+  return execCopy(text, doc);
+};
+
+// Copies from a hidden, selected textarea: some browsers only run the copy
+// command (and its copy event) when something is selected
+const execCopy = function (text, doc) {
   var textarea = doc.createElement('textarea');
   textarea.value = text;
   textarea.setAttribute('readonly', '');
@@ -80,8 +88,9 @@ export const copyText = async function (text, doc = document) {
 };
 
 /**
- * Reads a rendered table into cells for a formatted copy. Merged cells keep
- * their spans, headers and subtotal, total and running total rows are marked,
+ * Reads a rendered table into cells for a formatted copy. Header merges and
+ * row spans are kept; a body cell spanning columns is split as in
+ * tableToMatrix. Headers and subtotal, total and running total rows are marked,
  * and numbers stay numbers when Excel would show them exactly as the table
  * does (Looker value formats are Excel syntax); anything else is the text shown.
  * @param {HTMLTableElement} table
@@ -134,6 +143,14 @@ export const tableToSheet = function (table, valueFormatFor = () => '') {
           out.format = format;
         }
       }
+      if (!out.header && colspan > 1) {
+        out.colspan = 1;
+        for (var k = 0; k < rowspan; k++) {
+          for (var m = 1; m < colspan; m++) {
+            rows[r + k][c + m] = {text: '', total: out.total, header: false};
+          }
+        }
+      }
       rows[r][c] = out;
       c += colspan;
     });
@@ -149,14 +166,20 @@ const formatsAs = function (format, value, text) {
   }
 };
 
-// For cells rendered by Looker without a value format: a plain number with
-// optional thousands separators and decimals
+// For cells rendered by Looker without a matching value format: a number with
+// optional thousands separators, decimals and text either side ('£', ' RON')
 const guessFormat = function (text) {
-  var match = /^-?\d{1,3}(,\d{3})*(\.(\d+))?$|^-?\d+(\.(\d+))?$/.exec(text);
+  var match = /^-?([^\d-]*?)(\d{1,3}(,\d{3})+|\d+)(\.(\d+))?(\D*)$/.exec(text);
   if (!match) return null;
-  var decimals = (match[3] || match[5] || '').length;
-  var fraction = decimals ? '.' + '0'.repeat(decimals) : '';
-  return (match[1] ? '#,##0' : '0') + fraction;
+  var [, prefix, integer, grouped, , decimals = '', suffix] = match;
+  // Separators unless the number is long and shown without them
+  var number =
+    (grouped || integer.length <= 3 ? '#,##0' : '0') +
+    (decimals ? '.' + '0'.repeat(decimals.length) : '');
+  var quote = literal => (literal ? '"' + literal.replace(/"/g, '') + '"' : '');
+  return suffix === '%'
+    ? quote(prefix) + number + '%'
+    : quote(prefix) + number + quote(suffix);
 };
 
 const escapeHtml = function (value) {
@@ -258,9 +281,7 @@ export const copyRich = async function (html, text, doc = document) {
   };
   doc.addEventListener('copy', onCopy);
   try {
-    doc.execCommand('copy');
-  } catch (err) {
-    // fall through to the Clipboard API
+    execCopy(text, doc);
   } finally {
     doc.removeEventListener('copy', onCopy);
   }
