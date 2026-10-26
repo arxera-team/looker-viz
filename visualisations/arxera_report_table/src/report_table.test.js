@@ -223,4 +223,242 @@ describe('report_table visualization plugin', () => {
       expect(element.querySelector('#reportTable')).not.toBeNull();
     });
   });
+
+  describe('freeze header rows', () => {
+    const queryResponse = {
+      fields: {
+        pivots: [],
+        dimension_like: [{name: 'dim1', label: 'Dimension 1', type: 'string'}],
+        measure_like: [
+          {name: 'meas1', label: 'Measure 1', type: 'number', is_numeric: true},
+        ],
+      },
+      sorts: [],
+      pivots: [],
+    };
+    const data = [
+      {
+        dim1: {value: 'Category A', rendered: 'Category A'},
+        meas1: {value: 100, rendered: '100'},
+      },
+    ];
+
+    test('option exists and is off by default', () => {
+      expect(vizPlugin.options.freezeHeaders).toEqual(
+        expect.objectContaining({type: 'boolean', default: false})
+      );
+    });
+
+    test('header cells are sticky when enabled', async () => {
+      await vizPlugin.updateAsync(
+        data,
+        element,
+        {theme: 'traditional', freezeHeaders: true},
+        queryResponse,
+        {},
+        mockDone
+      );
+      const headerCells = element.querySelectorAll('#reportTable thead th');
+      expect(headerCells.length).toBeGreaterThan(0);
+      headerCells.forEach(th => {
+        expect(th.style.position).toBe('sticky');
+        expect(th.style.top).toBe('0px');
+        expect(th.style.backgroundColor).not.toBe('');
+      });
+    });
+
+    test('pivoted header rows stack below each other', async () => {
+      const rowRect = HTMLTableRowElement.prototype.getBoundingClientRect;
+      HTMLTableRowElement.prototype.getBoundingClientRect = () => ({
+        height: 24,
+      });
+      const pivotResponse = {
+        fields: {
+          pivots: [{name: 'piv1', label: 'Year'}],
+          dimension_like: [
+            {name: 'dim1', label: 'Dimension 1', type: 'string'},
+          ],
+          measure_like: [
+            {
+              name: 'meas1',
+              label: 'Measure 1',
+              type: 'number',
+              is_numeric: true,
+            },
+          ],
+        },
+        sorts: [],
+        pivots: [
+          {
+            key: '2021',
+            metadata: {piv1: {value: '2021'}},
+            sort_values: {piv1: '2021'},
+          },
+          {
+            key: '2022',
+            metadata: {piv1: {value: '2022'}},
+            sort_values: {piv1: '2022'},
+          },
+        ],
+      };
+      const pivotData = [
+        {
+          dim1: {value: 'Category A', rendered: 'Category A'},
+          meas1: {
+            2021: {value: 100, rendered: '100'},
+            2022: {value: 200, rendered: '200'},
+          },
+        },
+      ];
+      try {
+        await vizPlugin.updateAsync(
+          pivotData,
+          element,
+          {theme: 'traditional', freezeHeaders: true},
+          pivotResponse,
+          {},
+          mockDone
+        );
+      } finally {
+        HTMLTableRowElement.prototype.getBoundingClientRect = rowRect;
+      }
+      const rows = element.querySelectorAll('#reportTable thead tr');
+      expect(rows.length).toBeGreaterThan(1);
+      rows.forEach((row, i) => {
+        row.querySelectorAll('th').forEach(th => {
+          expect(th.style.top).toBe(i * 24 + 'px');
+        });
+      });
+    });
+
+    test('header cells are not sticky when disabled', async () => {
+      await vizPlugin.updateAsync(
+        data,
+        element,
+        {theme: 'traditional'},
+        queryResponse,
+        {},
+        mockDone
+      );
+      const headerCells = element.querySelectorAll('#reportTable thead th');
+      expect(headerCells.length).toBeGreaterThan(0);
+      headerCells.forEach(th => {
+        expect(th.style.position).toBe('');
+      });
+    });
+  });
+  describe('export buttons', () => {
+    const field = (name, label, extra) => ({
+      name,
+      label,
+      type: 'string',
+      is_numeric: false,
+      value_format: null,
+      ...extra,
+    });
+    const plQuery = {
+      fields: {
+        dimension_like: [
+          field('pl.section', 'Section'),
+          field('pl.line', 'Line'),
+        ],
+        measure_like: [
+          field('pl.amount', 'Amount', {
+            type: 'sum',
+            is_numeric: true,
+            value_format: '#,##0',
+          }),
+        ],
+        table_calculations: [],
+        pivots: [],
+        supermeasure_like: [],
+      },
+      sorts: [],
+    };
+    const plData = [
+      ['Rental Income', 'Rent', 100],
+      ['Direct Costs', 'Insurance', -8],
+    ].map(([section, line, amount]) => ({
+      'pl.section': {value: section, rendered: section},
+      'pl.line': {value: line, rendered: line},
+      'pl.amount': {value: amount, rendered: String(amount)},
+    }));
+
+    test('are off by default', async () => {
+      expect(vizPlugin.options.exportButtons).toEqual(
+        expect.objectContaining({type: 'boolean', default: false})
+      );
+      await vizPlugin.updateAsync(
+        plData,
+        element,
+        {theme: 'traditional'},
+        plQuery,
+        {},
+        mockDone
+      );
+      expect(element.querySelector('#exportToolbar')).toBeNull();
+    });
+
+    test('copy the table as shown, formatted, running totals included', async () => {
+      await vizPlugin.updateAsync(
+        plData,
+        element,
+        {
+          theme: 'traditional',
+          exportButtons: true,
+          rowSubtotals: true,
+          subtotalDepth: '1',
+          runningTotals: 'NOI > Direct Costs',
+        },
+        plQuery,
+        {},
+        mockDone
+      );
+      expect(element.querySelector('#exportToolbar')).not.toBeNull();
+      expect(element.querySelector('#downloadTable')).toBeNull();
+      const clipboard = {};
+      document.execCommand = jest.fn(() => {
+        const event = new Event('copy', {cancelable: true});
+        event.clipboardData = {
+          setData: (type, value) => (clipboard[type] = value),
+        };
+        document.dispatchEvent(event);
+        return true;
+      });
+      element.querySelector('#copyTable').dispatchEvent(new Event('click'));
+      await new Promise(resolve => setTimeout(resolve, 0));
+      const lines = clipboard['text/plain'].split('\n');
+      expect(lines.some(l => l.includes('NOI') && l.includes('92'))).toBe(true);
+      expect(lines.some(l => l.includes('Rent') && l.includes('100'))).toBe(
+        true
+      );
+      const doc = new DOMParser().parseFromString(
+        clipboard['text/html'],
+        'text/html'
+      );
+      const noi = Array.from(doc.querySelectorAll('tr')).find(tr =>
+        tr.textContent.includes('NOI')
+      );
+      expect(noi.textContent).toContain('92');
+      expect(noi.firstElementChild.getAttribute('style')).toContain(
+        'font-weight:700'
+      );
+      expect(element.querySelector('#exportToolbar').textContent).toContain(
+        'Copied, paste into Excel'
+      );
+    });
+
+    test('are left out of PDF and image downloads', async () => {
+      await vizPlugin.updateAsync(
+        plData,
+        element,
+        {theme: 'traditional', exportButtons: true},
+        plQuery,
+        {print: true},
+        mockDone
+      );
+      expect(element.querySelector('#reportTable')).not.toBeNull();
+      expect(element.querySelector('#exportToolbar')).toBeNull();
+    });
+  });
 });

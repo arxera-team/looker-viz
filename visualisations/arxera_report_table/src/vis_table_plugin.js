@@ -56,6 +56,13 @@ const tableModelCoreOptions = {
     default: true,
     order: 3.5,
   },
+  freezeHeaders: {
+    section: 'Theme',
+    type: 'boolean',
+    label: 'Freeze Header Rows',
+    default: false,
+    order: 3.6,
+  },
   headerFontSize: {
     section: 'Theme',
     type: 'number',
@@ -203,6 +210,14 @@ const tableModelCoreOptions = {
     default: '',
     order: 12,
   },
+  exportButtons: {
+    section: 'Table',
+    type: 'boolean',
+    label:
+      'Copy table button (formatted for Excel, incl. running totals)',
+    default: false,
+    order: 12.5,
+  },
   indexColumn: {
     section: 'Dimensions',
     type: 'boolean',
@@ -271,6 +286,8 @@ class VisPluginTableModel {
     this.fieldLevel = 0; // set in addPivotsAndHeaders()
     this.groupVarianceColumns = config.groupVarianceColumns || false;
     this.minWidthForIndexColumns = config.minWidthForIndexColumns || false;
+    this.freezeHeaders = config.freezeHeaders || false;
+    this.exportButtons = config.exportButtons || false;
     this.showTooltip = config.showTooltip || false;
     this.showHighlight = config.showHighlight || false;
     this.genericLabelForSubtotals = config.genericLabelForSubtotals || false;
