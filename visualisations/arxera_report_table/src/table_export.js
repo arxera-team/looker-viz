@@ -134,7 +134,7 @@ export const tableToSheet = function (table, valueFormatFor = () => '') {
         if (format) {
           out.value = datum.value;
           out.format = format;
-          out.plain = plainNumber(datum.value, out.text);
+          out.plain = plainNumber(datum.value, out.text, format);
         }
       }
       for (var i = 0; i < rowspan; i++) {
@@ -159,13 +159,16 @@ export const tableToSheet = function (table, valueFormatFor = () => '') {
 };
 
 // The number as Excel reads it when pasted, whatever it makes of the format:
-// thousands separators and the decimals shown, without text such as ' RON'
-// around it ('5.1%' is kept, as Excel reads percentages)
-const plainNumber = function (value, text) {
+// thousands separators only where the format shows them (not '2024' or an ID),
+// the decimals shown, without text such as ' RON' around it ('5.1%' is kept,
+// as Excel reads percentages)
+const plainNumber = function (value, text, format) {
   if (/^-?[\d,.]+%$/.test(text)) return text;
   var decimals = (/\.(\d+)/.exec(text) || [])[1] || '';
+  var grouped = /[#0],[#0]/.test(format);
   return SSF.format(
-    '#,##0' + (decimals ? '.' + '0'.repeat(decimals.length) : ''),
+    (grouped ? '#,##0' : '0') +
+      (decimals ? '.' + '0'.repeat(decimals.length) : ''),
     value
   );
 };

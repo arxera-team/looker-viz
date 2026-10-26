@@ -165,6 +165,18 @@ describe('formatted copy', () => {
     ]);
   });
 
+  test('keeps years and IDs shown without separators as they are', () => {
+    const table = bind(
+      buildTable('<tbody><tr><td>2024</td><td>40100</td></tr></tbody>'),
+      [{value: 2024}, {value: 40100}]
+    );
+    const rows = tableToSheet(table, () => '#,##0');
+    expect(rows[0].map(cell => [cell.format, cell.plain])).toEqual([
+      ['0', '2024'],
+      ['0', '40100'],
+    ]);
+  });
+
   test('plain text has every cell, amounts as plain numbers', () => {
     const rows = tableToSheet(plTable(), colid => formats[colid]);
     expect(matrixToTsv(sheetToMatrix(rows)).split('\n')).toEqual([

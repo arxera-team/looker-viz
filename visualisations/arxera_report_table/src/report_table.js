@@ -373,6 +373,7 @@ const buildReportTable = async function (
           var colElement = element.querySelector('#' + id);
           if (colElement) {
             colElement.classList.toggle('hover');
+            highlightFrozenHeaders(colElement);
           }
         }
 
@@ -417,6 +418,7 @@ const buildReportTable = async function (
           var colElement = element.querySelector('#' + id);
           if (colElement) {
             colElement.classList.toggle('hover');
+            highlightFrozenHeaders(colElement);
           }
         }
 
@@ -627,23 +629,74 @@ const buildReportTable = async function (
 
   // Keep header rows in view while the table scrolls. Each tier sits below
   // the ones above it (cumulative measured heights, so pivoted headers stack),
-  // and gets an opaque background so rows don't show through.
+  // and gets an opaque background so rows don't show through. Headers without
+  // their own background take the one behind the table, not plain white.
   const freezeHeaderRows = function () {
     var rows = element.querySelectorAll('#reportTable thead tr');
     var top = 0;
-    rows.forEach(row => {
+    var filled = [];
+    rows.forEach((row, r) => {
+      filled[r] = filled[r] || [];
+      var c = 0;
       d3.select(row)
         .selectAll('th')
         .style('position', 'sticky')
         .style('top', top + 'px')
         .style('z-index', 1)
-        .style('background-color', function () {
+        .each(function () {
+          // Column position, so a highlighted column can colour its headers
+          while (filled[r][c]) c++;
+          var rowspan = Math.max(
+            parseInt(this.getAttribute('rowspan'), 10) || 1,
+            1
+          );
+          var colspan = Math.max(
+            parseInt(this.getAttribute('colspan'), 10) || 1,
+            1
+          );
+          for (var i = 0; i < rowspan; i++) {
+            filled[r + i] = filled[r + i] || [];
+            for (var j = 0; j < colspan; j++) filled[r + i][c + j] = true;
+          }
+          this.frozenColumn = colspan === 1 ? c : null;
+          c += colspan;
+
+          this.style.backgroundColor = '';
           var bg = window.getComputedStyle(this).backgroundColor;
-          return !bg || bg === 'transparent' || bg === 'rgba(0, 0, 0, 0)'
-            ? '#ffffff'
-            : bg;
+          this.frozenPlain = isTransparent(bg);
+          this.frozenBackground = this.frozenPlain ? backdropColor(this) : bg;
+          this.style.backgroundColor = this.frozenBackground;
         });
       top += row.getBoundingClientRect().height;
+    });
+  };
+
+  const isTransparent = function (bg) {
+    return !bg || bg === 'transparent' || bg === 'rgba(0, 0, 0, 0)';
+  };
+
+  // The first background behind a cell: its row, the table, the page
+  const backdropColor = function (cell) {
+    for (var node = cell.parentElement; node; node = node.parentElement) {
+      var bg = window.getComputedStyle(node).backgroundColor;
+      if (!isTransparent(bg)) return bg;
+    }
+    return '#ffffff';
+  };
+
+  // Frozen headers are opaque, so the column highlight (painted on the <col>,
+  // beneath the cells) no longer shows through them. Colour the plain headers
+  // of that column directly instead, as it looked before freezing.
+  const highlightFrozenHeaders = function (colElement) {
+    if (!dataTable.freezeHeaders) return;
+    var cols = Array.from(element.querySelectorAll('#reportTable col'));
+    var index = cols.indexOf(colElement);
+    var on = colElement.classList.contains('hover');
+    var colour = window.getComputedStyle(colElement).backgroundColor;
+    element.querySelectorAll('#reportTable thead th').forEach(th => {
+      if (th.frozenPlain && th.frozenColumn === index) {
+        th.style.backgroundColor = on ? colour : th.frozenBackground;
+      }
     });
   };
 
