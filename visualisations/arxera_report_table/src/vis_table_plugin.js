@@ -218,6 +218,13 @@ const tableModelCoreOptions = {
     default: false,
     order: 12.2,
   },
+  hideEmptyColumns: {
+    section: 'Table',
+    type: 'boolean',
+    label: 'Hide empty columns (measures with no values in any line)',
+    default: false,
+    order: 12.3,
+  },
   exportButtons: {
     section: 'Table',
     type: 'boolean',
@@ -294,6 +301,7 @@ class VisPluginTableModel {
     this.groupVarianceColumns = config.groupVarianceColumns || false;
     this.minWidthForIndexColumns = config.minWidthForIndexColumns || false;
     this.freezeHeaders = config.freezeHeaders || false;
+    this.hideEmptyColumns = config.hideEmptyColumns || false;
     this.exportButtons = config.exportButtons || false;
     this.showTooltip = config.showTooltip || false;
     this.showHighlight = config.showHighlight || false;
@@ -367,6 +375,9 @@ class VisPluginTableModel {
     // console.log('addColumnSubTotals() complete')
     if (this.variances) {
       this.addVarianceColumns();
+    }
+    if (this.hideEmptyColumns) {
+      this.hideColumnsWithNoValues();
     }
 
     // this.addColumnSeries()    // TODO: add column series for generated columns (eg column subtotals)
@@ -1793,6 +1804,47 @@ class VisPluginTableModel {
   }
 
   /**
+   * Hides measure columns (pivoted, row total and variance columns included)
+   * with no value in any line item: null, undefined or blank. Zero is a value.
+   * Subtotal, running total and total rows are ignored, since they show 0 for
+   * an empty column. A variance column is hidden with either of its columns.
+   * Used for measures that only return values when a filter is set (e.g. the
+   * comparison period).
+   */
+  hideColumnsWithNoValues() {
+    var lineItems = this.data.filter(
+      row => row.type === 'line_item' && !row.hide
+    );
+    if (lineItems.length === 0) {
+      return;
+    }
+    var isEmpty = column =>
+      lineItems.every(row => {
+        var cell = row.data[column.id];
+        var value = cell ? cell.value : null;
+        return value === null || typeof value === 'undefined' || value === '';
+      });
+
+    var emptyIds = [];
+    this.columns
+      .filter(column => column.modelField.type === 'measure')
+      .filter(column => !column.isVariance)
+      .forEach(column => {
+        if (isEmpty(column)) {
+          column.hide = true;
+          emptyIds.push(column.id);
+        }
+      });
+    this.columns
+      .filter(column => column.isVariance)
+      .forEach(column => {
+        if ((column.varianceOf || []).some(id => emptyIds.includes(id))) {
+          column.hide = true;
+        }
+      });
+  }
+
+  /**
    * Whether a measure can be added up across rows by default: Looker sum,
    * sum_distinct and count measures. Others (count_distinct, min, max,
    * median, average, percentile, number measures such as ratios, table
@@ -2389,6 +2441,7 @@ class VisPluginTableModel {
     var comparison = this.getColumnById(colpair.variance.comparison);
     var column = new Column(id, this, baseline.modelField);
     column.isVariance = true;
+    column.varianceOf = [baseline.id, comparison.id];
 
     if (colpair.calc === 'absolute') {
       column.variance_type = 'absolute';
