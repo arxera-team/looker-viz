@@ -323,7 +323,6 @@ class Column {
     this.unit = modelField.unit || '';
     this.hide = modelField.hide || false;
     this.isVariance = false;
-    this.varianceOf = []; // [baseline id, comparison id] for variance columns
     this.variance_type = null;
     this.pivoted = false;
     this.isRowTotal = false;

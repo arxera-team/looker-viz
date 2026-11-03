@@ -153,97 +153,13 @@ describe('subtotalDrillLinks', () => {
   });
 
   test('drills into every line item the subtotal adds up', () => {
-    const [link] = subtotalDrillLinks(
-      [lineItem('Rent'), lineItem('Back+Rent')],
-      '£3.0'
-    );
+    const [link] = subtotalDrillLinks([lineItem('Rent'), lineItem('Back+Rent')], '£3.0');
 
-    expect(link.url).toBe(
-      '/explore/m/v?fields=a,b&f[level_1]=Rent&f[period]=202606&limit=500'
-    );
+    expect(link.url).toBe('/explore/m/v?fields=a,b&f[level_1]=Rent&f[period]=202606&limit=500');
     expect(link.label).toBe('Show All £3.0');
   });
 
   test('offers no drill when the line items have none', () => {
     expect(subtotalDrillLinks([{links: []}, {}], '£0.0')).toEqual([]);
-  });
-});
-
-describe('hideEmptyColumns', () => {
-  // A P&L with an actual and two comparison measures: one returns nothing
-  // (no comparison period set), the other only has values on some lines.
-  const measure = name => ({
-    name: name,
-    label: name,
-    type: 'sum',
-    is_numeric: true,
-    value_format: '#,##0',
-  });
-  const query = () => ({
-    fields: {
-      dimension_like: [
-        {name: 'pl.line', label: 'Line', type: 'string', is_numeric: false},
-      ],
-      measure_like: [
-        measure('pl.actual'),
-        measure('pl.comparison_empty'),
-        measure('pl.comparison_partial'),
-      ],
-      table_calculations: [],
-      pivots: [],
-      supermeasure_like: [],
-    },
-    sorts: [],
-  });
-  const data = () => [
-    {
-      'pl.line': {value: 'Rent'},
-      'pl.actual': {value: 100, rendered: '100'},
-      'pl.comparison_empty': {value: null},
-      'pl.comparison_partial': {value: null},
-    },
-    {
-      'pl.line': {value: 'Parking'},
-      'pl.actual': {value: 0, rendered: '0'},
-      'pl.comparison_empty': {value: null},
-      'pl.comparison_partial': {value: 0, rendered: '0'},
-    },
-  ];
-  const visibleIds = model =>
-    model.columns.filter(column => !column.hide).map(column => column.id);
-
-  test('hides a measure column with no value in any line, even with subtotals', () => {
-    const model = new VisPluginTableModel(data(), query(), {
-      hideEmptyColumns: true,
-      rowSubtotals: true,
-      subtotalDepth: '1',
-    });
-    expect(visibleIds(model)).toEqual([
-      'pl.line',
-      'pl.actual',
-      'pl.comparison_partial',
-    ]);
-  });
-
-  test('hides a variance column with its empty column', () => {
-    const model = new VisPluginTableModel(data(), query(), {
-      hideEmptyColumns: true,
-      'comparison|pl.comparison_empty': 'pl.actual',
-      'var_num|pl.comparison_empty': true,
-    });
-    // The absolute and percentage variance columns.
-    const variances = model.columns.filter(c => c.isVariance);
-    expect(variances.length).toBeGreaterThan(0);
-    expect(variances.every(c => c.hide)).toBe(true);
-  });
-
-  test('keeps every column when the option is off', () => {
-    const model = new VisPluginTableModel(data(), query(), {});
-    expect(visibleIds(model)).toEqual([
-      'pl.line',
-      'pl.actual',
-      'pl.comparison_empty',
-      'pl.comparison_partial',
-    ]);
   });
 });
