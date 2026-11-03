@@ -438,8 +438,9 @@ describe('statementPerGroup', () => {
     expect(statementRowsOf(model)).toEqual([
       ...statement('Mall', 1),
       ...statement('Office', 0.5),
-      {type: 'total', label: 'Net Result (all)', amount: 120},
     ]);
+    // The grand total is left out: each statement has its own.
+    expect(model.getDataRows().some(row => row.type === 'total')).toBe(false);
   });
 
   test('styles statement totals as totals with no drill', () => {

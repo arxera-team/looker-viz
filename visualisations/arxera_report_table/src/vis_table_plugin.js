@@ -1407,19 +1407,18 @@ class VisPluginTableModel {
     });
 
     // With one statement per first dimension, each statement has its own
-    // total, so Looker's total is the total of all of them.
-    var grandTotalLabel = this.statementPerGroup
-      ? this.totalLabel + ' (all)'
-      : this.totalLabel;
+    // total, and the grand total is left out (hidden rows are neither shown
+    // nor copied; the Others row still uses its values).
+    totalsRow.hide = this.statementPerGroup;
     if (this.useIndexColumn) {
-      totalsRow.data['$$$_index_$$$'].value = grandTotalLabel;
+      totalsRow.data['$$$_index_$$$'].value = this.totalLabel;
       totalsRow.data['$$$_index_$$$'].align = 'left';
       totalsRow.data['$$$_index_$$$'].colspan = this.dimensions.filter(
         d => !d.hide
       ).length;
     } else {
       if (this.firstVisibleDimension) {
-        totalsRow.data[this.firstVisibleDimension].value = grandTotalLabel;
+        totalsRow.data[this.firstVisibleDimension].value = this.totalLabel;
         totalsRow.data[this.firstVisibleDimension].align = 'left';
       }
     }
