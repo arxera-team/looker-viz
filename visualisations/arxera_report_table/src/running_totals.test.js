@@ -354,3 +354,129 @@ describe('addRunningTotals', () => {
     );
   });
 });
+
+describe('statementPerGroup', () => {
+  // The same P&L for two properties: property first, then section and line.
+  const property = {
+    name: 'pl.property',
+    label: 'Property',
+    type: 'string',
+    is_numeric: false,
+    value_format: null,
+  };
+
+  const propertyData = () =>
+    ['Mall', 'Office'].flatMap(p =>
+      lines.map(([s, l, a]) => ({
+        'pl.property': {value: p},
+        'pl.section': {value: s},
+        'pl.line': {value: l},
+        // The office is half the size of the mall.
+        'pl.amount': {
+          value: p === 'Mall' ? a : a / 2,
+          rendered: String(a),
+        },
+      }))
+    );
+
+  const propertyQuery = () => ({
+    ...flatQuery(),
+    fields: {...flatQuery().fields, dimension_like: [property, section, line]},
+    totals_data: {'pl.amount': {value: 120, rendered: '120'}},
+  });
+
+  const statementConfig = (statementPerGroup = true) => ({
+    rowSubtotals: true,
+    subtotalDepth: '2',
+    runningTotals:
+      'Gross Operating Income > Other Property Income; NOI > Direct Costs',
+    totalLabel: 'Net Result',
+    statementPerGroup: statementPerGroup,
+  });
+
+  const statementRowsOf = model =>
+    model.data
+      .filter(row => !row.hide)
+      .map(row => ({
+        type: row.statementHeader
+          ? 'header'
+          : row.runningTotal
+            ? 'running_total'
+            : row.type,
+        label:
+          row.type === 'line_item'
+            ? row.data['pl.line'].value
+            : row.data['pl.property'].value,
+        amount: row.data['pl.amount'].value,
+      }));
+
+  test('gives each first dimension value a full statement with its own totals', () => {
+    const model = new VisPluginTableModel(
+      propertyData(),
+      propertyQuery(),
+      statementConfig()
+    );
+    const statement = (name, scale) => [
+      {type: 'header', label: name, amount: ''},
+      {type: 'line_item', label: 'Rent', amount: 100 * scale},
+      {type: 'line_item', label: 'Turnover rent', amount: 20 * scale},
+      {type: 'subtotal', label: 'Rental Income', amount: 120 * scale},
+      {type: 'line_item', label: 'Parking', amount: 5 * scale},
+      {type: 'line_item', label: 'Utilities income', amount: 3 * scale},
+      {type: 'subtotal', label: 'Other Property Income', amount: 8 * scale},
+      {
+        type: 'running_total',
+        label: 'Gross Operating Income',
+        amount: 128 * scale,
+      },
+      {type: 'line_item', label: 'Building costs', amount: -40 * scale},
+      {type: 'line_item', label: 'Insurance', amount: -8 * scale},
+      {type: 'subtotal', label: 'Direct Costs', amount: -48 * scale},
+      {type: 'running_total', label: 'NOI', amount: 80 * scale},
+      {type: 'subtotal', label: 'Net Result', amount: 80 * scale},
+    ];
+    expect(statementRowsOf(model)).toEqual([
+      ...statement('Mall', 1),
+      ...statement('Office', 0.5),
+      {type: 'total', label: 'Net Result (all)', amount: 120},
+    ]);
+  });
+
+  test('styles statement totals as totals with no drill', () => {
+    const model = new VisPluginTableModel(
+      propertyData(),
+      propertyQuery(),
+      statementConfig()
+    );
+    const total = model.data.find(row => row.id === 'StatementTotal|Office');
+    expect(total.data['pl.amount'].cell_style).toEqual(
+      expect.arrayContaining(['total', 'statement_total'])
+    );
+    expect(total.data['pl.amount'].links || []).toEqual([]);
+  });
+
+  test('leaves the table unchanged when the option is off', () => {
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const model = new VisPluginTableModel(
+      propertyData(),
+      propertyQuery(),
+      statementConfig(false)
+    );
+    const rows = statementRowsOf(model);
+    expect(rows.filter(row => row.type === 'header')).toEqual([]);
+    expect(rows.find(row => row.type === 'subtotal')).toEqual({
+      type: 'subtotal',
+      label: 'Mall | Rental Income',
+      amount: 120,
+    });
+    // Running totals match the first dimension or the whole group only, so
+    // section names alone match nothing, as before.
+    expect(rows.filter(row => row.type === 'running_total')).toEqual([]);
+    expect(rows[rows.length - 1]).toEqual({
+      type: 'total',
+      label: 'Net Result',
+      amount: 120,
+    });
+    warn.mockRestore();
+  });
+});
