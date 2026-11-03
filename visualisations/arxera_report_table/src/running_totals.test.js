@@ -406,9 +406,23 @@ describe('statementPerGroup', () => {
         label:
           row.type === 'line_item'
             ? row.data['pl.line'].value
-            : row.data['pl.property'].value,
+            : row.data[model.firstVisibleDimension].value,
         amount: row.data['pl.amount'].value,
       }));
+
+  // The cells each row renders: [column, rowspan, colspan].
+  const renderedCellsOf = model =>
+    model
+      .getDataRows()
+      .map(row =>
+        model
+          .getTableRowColumns(row)
+          .map(column => [
+            column.id,
+            row.data[column.id].rowspan,
+            row.data[column.id].colspan,
+          ])
+      );
 
   test('gives each first dimension value a full statement with its own totals', () => {
     const model = new VisPluginTableModel(
@@ -441,6 +455,65 @@ describe('statementPerGroup', () => {
     ]);
     // The grand total is left out: each statement has its own.
     expect(model.getDataRows().some(row => row.type === 'total')).toBe(false);
+  });
+
+  test('hides the first dimension and spans every row correctly', () => {
+    const model = new VisPluginTableModel(propertyData(), propertyQuery(), {
+      ...statementConfig(),
+      spanRows: true,
+    });
+    expect(model.columns.find(c => c.id === 'pl.property').hide).toBe(true);
+    const label = [
+      ['pl.section', 1, 2],
+      ['pl.amount', 1, 1],
+    ];
+    const firstSection = [
+      ['pl.section', 2, 1],
+      ['pl.line', 1, 1],
+      ['pl.amount', 1, 1],
+    ];
+    const nextLine = [
+      ['pl.line', 1, 1],
+      ['pl.amount', 1, 1],
+    ];
+    const statement = [
+      label, // heading
+      firstSection, // Rent
+      nextLine, // Turnover rent
+      label, // Rental Income
+      firstSection, // Parking
+      nextLine, // Utilities income
+      label, // Other Property Income
+      label, // Gross Operating Income
+      firstSection, // Building costs
+      nextLine, // Insurance
+      label, // Direct Costs
+      label, // NOI
+      label, // Net Result
+    ];
+    expect(renderedCellsOf(model)).toEqual([...statement, ...statement]);
+  });
+
+  test('does not merge the first line item into the heading above it', () => {
+    const model = new VisPluginTableModel(propertyData(), propertyQuery(), {
+      ...statementConfig(),
+      spanRows: true,
+    });
+    // With the property column shown, each heading's label (the property)
+    // sits in the property column, the same value as the line items below.
+    model.dimensions[0].hide = false;
+    model.data
+      .filter(row => row.statementHeader)
+      .forEach(row => {
+        row.data['pl.property'].value = row.data['pl.section'].value;
+      });
+    model.setRowSpans();
+    const firstLines = model.data.filter(
+      row => row.type === 'line_item' && row.data['pl.line'].value === 'Rent'
+    );
+    firstLines.forEach(row => {
+      expect(row.data['pl.property'].rowspan).toBe(2);
+    });
   });
 
   test('styles statement totals as totals with no drill', () => {

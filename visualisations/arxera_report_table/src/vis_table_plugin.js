@@ -666,6 +666,12 @@ class VisPluginTableModel {
         queryResponseField: dimension,
       });
       newDimension.hide = this.useIndexColumn ? true : newDimension.hide;
+      // Each statement's heading names the first dimension, so its column is
+      // redundant. Looker stores 'hide|' as false by default, so it can't
+      // be used to keep the column.
+      if (this.statementPerGroup && this.dimensions.length === 0) {
+        newDimension.hide = true;
+      }
       this.dimensions.push(newDimension);
 
       var column = new Column(newDimension.name, this, newDimension);
@@ -1571,11 +1577,15 @@ class VisPluginTableModel {
       for (var t = 0; t < tiers.length; t++) {
         var tier = tiers[t];
         var this_tier_value = leaf.data[tier.name].value;
-        var neighbour_value =
-          l > 0 ? leaves[l - 1].data[tier.name].value : null;
+        // Only merge with a line item above: a statement heading row holds
+        // the first dimension's value in its label cell, but spans nothing.
+        var mergeable = l > 0 && leaves[l - 1].type === 'line_item';
+        var neighbour_value = mergeable
+          ? leaves[l - 1].data[tier.name].value
+          : null;
 
         // Match: mark invisible (span_value = -1). Increment the span_tracker.
-        if (l > 0 && this_tier_value === neighbour_value) {
+        if (mergeable && this_tier_value === neighbour_value) {
           leaf.data[tier.name].rowspan = -1;
           leaf.data[tier.name].colspan = -1;
           span_tracker[tier.name] += 1;
