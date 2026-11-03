@@ -218,6 +218,14 @@ const tableModelCoreOptions = {
     default: false,
     order: 12.2,
   },
+  hideColumnsWithoutFilter: {
+    section: 'Table',
+    type: 'string',
+    label:
+      'Hide columns when a filter is blank: filter > text[, text]; ... (e.g. ma.comparison_period_filter > comparison)',
+    default: '',
+    order: 12.3,
+  },
   exportButtons: {
     section: 'Table',
     type: 'boolean',
@@ -310,6 +318,10 @@ class VisPluginTableModel {
       config.runningTotals
     );
     this.subTotalGroups = [];
+    this.hideColumnsWithoutFilter = VisPluginTableModel.parseFilterColumns(
+      config.hideColumnsWithoutFilter
+    );
+    this.appliedFilters = queryResponse.applied_filters || {};
 
     this.sorts = queryResponse.sorts;
     this.hasTotals =
@@ -367,6 +379,9 @@ class VisPluginTableModel {
     // console.log('addColumnSubTotals() complete')
     if (this.variances) {
       this.addVarianceColumns();
+    }
+    if (this.hideColumnsWithoutFilter.length > 0) {
+      this.hideColumnsForBlankFilters();
     }
 
     // this.addColumnSeries()    // TODO: add column series for generated columns (eg column subtotals)
@@ -1793,6 +1808,83 @@ class VisPluginTableModel {
   }
 
   /**
+   * Parses the hideColumnsWithoutFilter option: entries separated by ';' or
+   * new lines, each 'filter field name > text, text, ...'.
+   * @param {string} option - the hideColumnsWithoutFilter config value
+   * @returns {{filter: string, texts: string[]}[]}
+   */
+  static parseFilterColumns(option) {
+    if (typeof option !== 'string' || option.trim() === '') {
+      return [];
+    }
+    return option
+      .split(/[;\n]/)
+      .map(entry => entry.split('>'))
+      .filter(parts => parts.length === 2)
+      .map(([filter, texts]) => ({
+        filter: filter.trim(),
+        texts: texts
+          .split(',')
+          .map(text => text.trim().toLowerCase())
+          .filter(text => text !== ''),
+      }))
+      .filter(entry => entry.filter !== '' && entry.texts.length > 0);
+  }
+
+  /**
+   * Whether a filter is applied to the query. Looker's applied_filters is keyed
+   * by field name, each {field, value}; a missing or blank value is not applied.
+   * @param {string} name - the filter's field name, e.g. 'view.field'
+   * @returns {boolean}
+   */
+  isFilterApplied(name) {
+    var applied = this.appliedFilters[name];
+    var value = applied ? applied.value : null;
+    return (
+      value !== null &&
+      typeof value !== 'undefined' &&
+      String(value).trim() !== ''
+    );
+  }
+
+  /**
+   * Hides measure columns (pivoted and row total columns included) whose field
+   * name contains one of an entry's texts when the entry's filter is blank,
+   * e.g. comparison period measures, which return 0 rather than null with no
+   * comparison period. A variance column is hidden with either of its columns.
+   */
+  hideColumnsForBlankFilters() {
+    var texts = [];
+    this.hideColumnsWithoutFilter
+      .filter(entry => !this.isFilterApplied(entry.filter))
+      .forEach(entry => {
+        texts = texts.concat(entry.texts);
+      });
+    if (texts.length === 0) {
+      return;
+    }
+
+    var hiddenIds = [];
+    this.columns
+      .filter(column => column.modelField.type === 'measure')
+      .filter(column => !column.isVariance)
+      .forEach(column => {
+        var name = (column.modelField.name || '').toLowerCase();
+        if (texts.some(text => name.includes(text))) {
+          column.hide = true;
+          hiddenIds.push(column.id);
+        }
+      });
+    this.columns
+      .filter(column => column.isVariance)
+      .forEach(column => {
+        if (column.varianceOf.some(id => hiddenIds.includes(id))) {
+          column.hide = true;
+        }
+      });
+  }
+
+  /**
    * Whether a measure can be added up across rows by default: Looker sum,
    * sum_distinct and count measures. Others (count_distinct, min, max,
    * median, average, percentile, number measures such as ratios, table
@@ -2389,6 +2481,7 @@ class VisPluginTableModel {
     var comparison = this.getColumnById(colpair.variance.comparison);
     var column = new Column(id, this, baseline.modelField);
     column.isVariance = true;
+    column.varianceOf = [baseline.id, comparison.id];
 
     if (colpair.calc === 'absolute') {
       column.variance_type = 'absolute';
