@@ -5,6 +5,13 @@
 
 import {VisPluginTableModel} from './vis_table_plugin';
 import * as d3 from './d3loader';
+import {
+  copyRich,
+  matrixToTsv,
+  sheetToHtml,
+  sheetToMatrix,
+  tableToSheet,
+} from './table_export';
 import themeTraditional from './theme_traditional.css';
 import themeLooker from './theme_looker.css';
 import themeContemporary from './theme_contemporary.css';
@@ -104,6 +111,41 @@ const buildReportTable = async function (
       var metrics = context.measureText(text);
       return metrics.width;
     };
+
+    // Looker's downloads use the query results, so rows the table adds
+    // (subtotals, running totals) can only be exported from here. Its vis
+    // iframe blocks file downloads, so the table is copied for pasting into
+    // Excel. Not drawn when Looker renders the tile for a PDF or image.
+    if (dataTable.exportButtons && !details?.print) {
+      var toolbar = d3
+        .select(element)
+        .select('#visContainer')
+        .append('div')
+        .attr('id', 'exportToolbar')
+        .style('text-align', 'right')
+        .style('font-size', '11px')
+        .style('margin-bottom', '4px');
+      var status = toolbar.append('span').style('margin-right', '8px');
+      toolbar
+        .append('button')
+        .attr('id', 'copyTable')
+        .text('Copy table')
+        .on('click', async () => {
+          var tableEl = element.querySelector('#reportTable');
+          var sheet = tableToSheet(
+            tableEl,
+            colid =>
+              dataTable.getColumnById(colid).modelField?.value_format || '#,##0'
+          );
+          var copied = await copyRich(
+            sheetToHtml(sheet),
+            matrixToTsv(sheetToMatrix(sheet))
+          );
+          status.text(
+            copied ? 'Copied, paste into Excel' : 'Copy blocked by the browser'
+          );
+        });
+    }
 
     var table = d3
       .select(element)
@@ -331,6 +373,7 @@ const buildReportTable = async function (
           var colElement = element.querySelector('#' + id);
           if (colElement) {
             colElement.classList.toggle('hover');
+            highlightFrozenHeaders(colElement);
           }
         }
 
@@ -375,6 +418,7 @@ const buildReportTable = async function (
           var colElement = element.querySelector('#' + id);
           if (colElement) {
             colElement.classList.toggle('hover');
+            highlightFrozenHeaders(colElement);
           }
         }
 
@@ -583,11 +627,101 @@ const buildReportTable = async function (
     }
   };
 
+  // Keep header rows in view while the table scrolls. Each tier sits below
+  // the ones above it (cumulative measured heights, so pivoted headers stack),
+  // and gets an opaque background so rows don't show through. Headers without
+  // their own background take the one behind the table, not plain white.
+  const freezeHeaderRows = function () {
+    var rows = element.querySelectorAll('#reportTable thead tr');
+    var top = 0;
+    var filled = [];
+    rows.forEach((row, r) => {
+      filled[r] = filled[r] || [];
+      var c = 0;
+      d3.select(row)
+        .selectAll('th')
+        .style('position', 'sticky')
+        .style('top', top + 'px')
+        .style('z-index', 1)
+        .each(function () {
+          // Column position, so a highlighted column can colour its headers
+          while (filled[r][c]) c++;
+          var rowspan = Math.max(
+            parseInt(this.getAttribute('rowspan'), 10) || 1,
+            1
+          );
+          var colspan = Math.max(
+            parseInt(this.getAttribute('colspan'), 10) || 1,
+            1
+          );
+          for (var i = 0; i < rowspan; i++) {
+            filled[r + i] = filled[r + i] || [];
+            for (var j = 0; j < colspan; j++) filled[r + i][c + j] = true;
+          }
+          this.frozenColumn = colspan === 1 ? c : null;
+          c += colspan;
+
+          this.style.backgroundColor = '';
+          var bg = window.getComputedStyle(this).backgroundColor;
+          this.frozenPlain = isTransparent(bg);
+          this.frozenBackground = this.frozenPlain ? backdropColor(this) : bg;
+          this.style.backgroundColor = this.frozenBackground;
+        });
+      top += row.getBoundingClientRect().height;
+    });
+  };
+
+  const isTransparent = function (bg) {
+    return !bg || bg === 'transparent' || bg === 'rgba(0, 0, 0, 0)';
+  };
+
+  // The first background behind a cell: its row, the table, the page
+  const backdropColor = function (cell) {
+    for (var node = cell.parentElement; node; node = node.parentElement) {
+      var bg = window.getComputedStyle(node).backgroundColor;
+      if (!isTransparent(bg)) return bg;
+    }
+    return '#ffffff';
+  };
+
+  // Frozen headers are opaque, so the column highlight (painted on the <col>,
+  // beneath the cells) no longer shows through them. Colour the plain headers
+  // of that column directly instead, as it looked before freezing.
+  const highlightFrozenHeaders = function (colElement) {
+    if (!dataTable.freezeHeaders) return;
+    var cols = Array.from(element.querySelectorAll('#reportTable col'));
+    var index = cols.indexOf(colElement);
+    var on = colElement.classList.contains('hover');
+    var colour = window.getComputedStyle(colElement).backgroundColor;
+    element.querySelectorAll('#reportTable thead th').forEach(th => {
+      if (th.frozenPlain && th.frozenColumn === index) {
+        th.style.backgroundColor = on ? colour : th.frozenBackground;
+      }
+    });
+  };
+
   await renderTable();
   try {
     const reportTableEl = element.querySelector('#reportTable');
     if (reportTableEl) {
       reportTableEl.classList.add('reveal');
+    }
+    if (dataTable.freezeHeaders) {
+      // Measure once laid out, again once web fonts settle row heights, and
+      // on resize (one listener per container, replaced on each render)
+      freezeHeaderRows();
+      window.requestAnimationFrame(freezeHeaderRows);
+      if (document.fonts && document.fonts.ready) {
+        document.fonts.ready.then(freezeHeaderRows);
+      }
+      if (element.freezeHeaderRowsListener) {
+        window.removeEventListener('resize', element.freezeHeaderRowsListener);
+      }
+      element.freezeHeaderRowsListener = freezeHeaderRows;
+      window.addEventListener('resize', freezeHeaderRows);
+    } else if (element.freezeHeaderRowsListener) {
+      window.removeEventListener('resize', element.freezeHeaderRowsListener);
+      element.freezeHeaderRowsListener = null;
     }
     const visSvgEl = element.querySelector('#visSvg');
     if (config.customTheme === 'animate') {
