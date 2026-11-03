@@ -1427,9 +1427,8 @@ class VisPluginTableModel {
       }
     });
 
-    // With one statement per first dimension, each statement has its own
-    // total, and the grand total is left out (hidden rows are neither shown
-    // nor copied; the Others row still uses its values).
+    // Each statement has its own total, so the grand total is hidden (not
+    // shown or copied). It stays in the model for the Others row.
     totalsRow.hide = this.statementPerGroup;
     if (this.useIndexColumn) {
       totalsRow.data['$$$_index_$$$'].value = this.totalLabel;
