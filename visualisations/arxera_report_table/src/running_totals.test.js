@@ -553,4 +553,116 @@ describe('statementPerGroup', () => {
     });
     warn.mockRestore();
   });
+
+  test('starts subtotals at the second dimension at the default depth of 1', () => {
+    const model = new VisPluginTableModel(propertyData(), propertyQuery(), {
+      ...statementConfig(),
+      subtotalDepth: '1',
+    });
+    const atDepthTwo = new VisPluginTableModel(
+      propertyData(),
+      propertyQuery(),
+      statementConfig()
+    );
+    expect(statementRowsOf(model)).toEqual(statementRowsOf(atDepthTwo));
+  });
+
+  test('leaves out the subtotal that repeats the total with two dimensions', () => {
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const data = propertyData().filter(
+      row => row['pl.section'].value === 'Rental Income'
+    );
+    data.forEach(row => delete row['pl.section']);
+    const query = propertyQuery();
+    query.fields.dimension_like = [property, line];
+    const model = new VisPluginTableModel(data, query, {
+      ...statementConfig(),
+      subtotalDepth: '1',
+    });
+    expect(statementRowsOf(model).slice(0, 4)).toEqual([
+      {type: 'header', label: 'Mall', amount: ''},
+      {type: 'line_item', label: 'Rent', amount: 100},
+      {type: 'line_item', label: 'Turnover rent', amount: 20},
+      {type: 'subtotal', label: 'Net Result', amount: 120},
+    ]);
+    warn.mockRestore();
+  });
+
+  test('leaves column subtotals blank on headings and non-additive totals', () => {
+    const quarters = [];
+    ['2026', '2027'].forEach(year =>
+      ['Q1', 'Q2'].forEach(quarter =>
+        quarters.push({
+          key: year + '|FIELD|' + quarter,
+          data: {'pl.year': year, 'pl.quarter': quarter},
+          metadata: {'pl.year': {value: year}, 'pl.quarter': {value: quarter}},
+          sort_values: {'pl.year': year, 'pl.quarter': quarter},
+          is_total: false,
+        })
+      )
+    );
+    const pivotField = name => ({...property, name: name, label: name});
+    const yieldMeasure = {
+      ...amount,
+      name: 'pl.yield',
+      label: 'Yield',
+      type: 'average',
+    };
+    const data = propertyData().map(row => {
+      const byQuarter = value =>
+        Object.fromEntries(
+          quarters.map(q => [q.key, {value: value, rendered: String(value)}])
+        );
+      return {
+        ...row,
+        'pl.amount': byQuarter(row['pl.amount'].value),
+        'pl.yield': byQuarter(0.05),
+      };
+    });
+    const query = {
+      ...propertyQuery(),
+      fields: {
+        ...propertyQuery().fields,
+        measure_like: [
+          {...amount, can_pivot: true},
+          {...yieldMeasure, can_pivot: true},
+        ],
+        pivots: [pivotField('pl.year'), pivotField('pl.quarter')],
+      },
+      pivots: quarters,
+    };
+    delete query.totals_data;
+    const log = jest.spyOn(console, 'log').mockImplementation(() => {});
+    const model = new VisPluginTableModel(data, query, {
+      ...statementConfig(),
+      colSubtotals: true,
+    });
+    log.mockRestore();
+    const subtotalOf = (rowId, measure) =>
+      model.columns
+        .filter(c => c.subtotal && c.modelField.name === measure)
+        .map(c => model.data.find(row => row.id === rowId).data[c.id].rendered);
+    expect(subtotalOf('StatementHeader|Mall', 'pl.amount')).toEqual(['', '']);
+    expect(subtotalOf('StatementTotal|Mall', 'pl.yield')).toEqual(['', '']);
+    expect(subtotalOf('StatementTotal|Mall', 'pl.amount')).toEqual([
+      '160',
+      '160',
+    ]);
+  });
+
+  test('heads the Others row statement Others', () => {
+    const query = {
+      ...propertyQuery(),
+      truncated: true,
+      totals_data: {'pl.amount': {value: 200, rendered: '200'}},
+    };
+    const model = new VisPluginTableModel(propertyData(), query, {
+      ...statementConfig(),
+      calculateOthers: true,
+    });
+    const headings = model.data
+      .filter(row => row.statementHeader)
+      .map(row => row.data[model.firstVisibleDimension].rendered);
+    expect(headings).toEqual(['Mall', 'Office', 'Others']);
+  });
 });

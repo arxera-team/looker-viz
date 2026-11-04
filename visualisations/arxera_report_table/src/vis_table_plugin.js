@@ -344,6 +344,12 @@ class VisPluginTableModel {
     var col_idx = 0;
     this.addPivotsAndHeaders(queryResponse);
     this.addDimensions(queryResponse, col_idx);
+    // Each statement is one first dimension value, so its subtotals start at
+    // the second dimension: at a depth of 1 they would repeat the statement
+    // total and no running total could match a group.
+    if (this.statementPerGroup && this.dimensions.length > 2) {
+      this.addSubtotalDepth = Math.max(this.addSubtotalDepth, 2);
+    }
     this.addMeasures(queryResponse, col_idx);
 
     this.checkVarianceCalculations();
@@ -1810,6 +1816,9 @@ class VisPluginTableModel {
         {name: 'subtotal', value: s},
         {name: 'original_row', value: 9999},
       ];
+      // With only two dimensions each statement is a single group, and its
+      // subtotal would repeat the statement total below it.
+      subtotalRow.hide = this.statementPerGroup && subTotalGroup.length === 1;
       this.data.push(subtotalRow);
     });
     this.sortData();
@@ -2025,7 +2034,16 @@ class VisPluginTableModel {
    * one reads as a full P&L with its own Net Result.
    */
   addStatementRows() {
+    // The Others row (see calculateOthers) has no first dimension, so its
+    // statement is headed Others rather than 'undefined'.
+    var othersRow = this.data.find(
+      row => row.id === 'Others' && row.type === 'line_item'
+    );
     this.statementBlocks().forEach(block => {
+      var heading =
+        othersRow && othersRow.sort[1].value === block.first
+          ? 'Others'
+          : block.name;
       var header = new Row('subtotal');
       header.statementHeader = true;
       header.id = ['StatementHeader', block.name].join('|');
@@ -2036,8 +2054,8 @@ class VisPluginTableModel {
         ].includes(column.id);
         var isDimension = column.modelField.type === 'dimension';
         header.data[column.id] = new DataCell({
-          value: isLabelColumn ? block.name : '',
-          rendered: isLabelColumn ? String(block.name) : '',
+          value: isLabelColumn ? heading : '',
+          rendered: isLabelColumn ? String(heading) : '',
           cell_style: [
             'statement_header',
             isDimension ? 'dimension' : 'measure',
@@ -2371,6 +2389,24 @@ class VisPluginTableModel {
     // CALCULATE COLUMN SUB TOTAL VALUES
     this.data.forEach(row => {
       subtotalColumns.forEach(subtotalColumn => {
+        // Statement headings, and running or statement totals of measures
+        // that are not added up, are blank, so their subtotals are too.
+        if (
+          row.statementHeader ||
+          subtotalColumn.subtotal_data.columns.every(
+            column => row.data[column.id].value === ''
+          )
+        ) {
+          row.data[subtotalColumn.id] = new DataCell({
+            rendered: '',
+            cell_style: row.statementHeader
+              ? ['statement_header', 'measure']
+              : ['subtotal', 'measure'],
+            colid: subtotalColumn.id,
+            rowid: row.id,
+          });
+          return;
+        }
         var cell_style = subtotalColumn.modelField.is_numeric
           ? ['subtotal', 'numeric', 'measure']
           : ['subtotal', 'nonNumeric', 'measure'];
