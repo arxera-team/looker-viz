@@ -153,13 +153,126 @@ describe('subtotalDrillLinks', () => {
   });
 
   test('drills into every line item the subtotal adds up', () => {
-    const [link] = subtotalDrillLinks([lineItem('Rent'), lineItem('Back+Rent')], '£3.0');
+    const [link] = subtotalDrillLinks(
+      [lineItem('Rent'), lineItem('Back+Rent')],
+      '£3.0'
+    );
 
-    expect(link.url).toBe('/explore/m/v?fields=a,b&f[level_1]=Rent&f[period]=202606&limit=500');
+    expect(link.url).toBe(
+      '/explore/m/v?fields=a,b&f[level_1]=Rent&f[period]=202606&limit=500'
+    );
     expect(link.label).toBe('Show All £3.0');
   });
 
   test('offers no drill when the line items have none', () => {
     expect(subtotalDrillLinks([{links: []}, {}], '£0.0')).toEqual([]);
+  });
+});
+
+describe('hideColumnsWithoutFilter', () => {
+  // An actual and two comparison measures, which return 0 when no comparison
+  // period is set.
+  const measure = name => ({
+    name: name,
+    label: name,
+    type: 'sum',
+    is_numeric: true,
+    value_format: '#,##0',
+  });
+  const query = appliedFilters => ({
+    fields: {
+      dimension_like: [
+        {name: 'pl.line', label: 'Line', type: 'string', is_numeric: false},
+      ],
+      measure_like: [
+        measure('pl.actual'),
+        measure('pl.actual_comparison_month'),
+        measure('pl.actual_comparison_ytd'),
+      ],
+      table_calculations: [],
+      pivots: [],
+      supermeasure_like: [],
+    },
+    sorts: [],
+    applied_filters: appliedFilters,
+  });
+  const data = () => [
+    {
+      'pl.line': {value: 'Rent'},
+      'pl.actual': {value: 100, rendered: '100'},
+      'pl.actual_comparison_month': {value: 0, rendered: '0'},
+      'pl.actual_comparison_ytd': {value: 0, rendered: '0'},
+    },
+  ];
+  const option = 'pl.comparison_period_filter > comparison';
+  const comparisonFilter = value => ({
+    'pl.comparison_period_filter': {
+      field: {name: 'pl.comparison_period_filter'},
+      value: value,
+    },
+  });
+  const visibleIds = model =>
+    model.columns.filter(column => !column.hide).map(column => column.id);
+
+  test('hides matching columns when the filter is missing or blank', () => {
+    [undefined, {}, comparisonFilter(''), comparisonFilter(null)].forEach(
+      applied => {
+        const model = new VisPluginTableModel(data(), query(applied), {
+          hideColumnsWithoutFilter: option,
+        });
+        expect(visibleIds(model)).toEqual(['pl.line', 'pl.actual']);
+      }
+    );
+  });
+
+  test('keeps matching columns when the filter is set', () => {
+    const model = new VisPluginTableModel(
+      data(),
+      query(comparisonFilter('202509')),
+      {hideColumnsWithoutFilter: option}
+    );
+    expect(visibleIds(model)).toEqual([
+      'pl.line',
+      'pl.actual',
+      'pl.actual_comparison_month',
+      'pl.actual_comparison_ytd',
+    ]);
+  });
+
+  test('hides variance columns of a hidden column', () => {
+    const model = new VisPluginTableModel(data(), query({}), {
+      hideColumnsWithoutFilter: option,
+      'comparison|pl.actual_comparison_month': 'pl.actual',
+      'var_num|pl.actual_comparison_month': true,
+    });
+    const variances = model.columns.filter(c => c.isVariance);
+    expect(variances.length).toBeGreaterThan(0);
+    expect(variances.every(c => c.hide)).toBe(true);
+  });
+
+  test('changes nothing when the option is empty', () => {
+    const model = new VisPluginTableModel(data(), query({}), {});
+    expect(visibleIds(model)).toEqual([
+      'pl.line',
+      'pl.actual',
+      'pl.actual_comparison_month',
+      'pl.actual_comparison_ytd',
+    ]);
+  });
+
+  test('ignores malformed entries', () => {
+    expect(
+      VisPluginTableModel.parseFilterColumns(
+        'no arrow; > comparison; pl.filter >; a > b > c'
+      )
+    ).toEqual([]);
+    expect(
+      VisPluginTableModel.parseFilterColumns(
+        'pl.filter > Comparison, , ytd;\npl.other > budget'
+      )
+    ).toEqual([
+      {filter: 'pl.filter', texts: ['comparison', 'ytd']},
+      {filter: 'pl.other', texts: ['budget']},
+    ]);
   });
 });

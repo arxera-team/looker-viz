@@ -35,7 +35,11 @@ modified by the "General Software Terms" of the Google Cloud Service Specific Te
 }
 
 .tooltipTable {
-  font-family: Open Sans, Helvetica, Arial, sans-serif;
+  font-family:
+    Open Sans,
+    Helvetica,
+    Arial,
+    sans-serif;
   border: 0px;
   border-collapse: collapse;
   table-layout: auto;
@@ -54,7 +58,12 @@ modified by the "General Software Terms" of the Google Cloud Service Specific Te
 }
 
 .reportTable {
-  font-family: Open Sans, Helvetica, Arial, Noto Sans SC, Noto Sans TC,
+  font-family:
+    Open Sans,
+    Helvetica,
+    Arial,
+    Noto Sans SC,
+    Noto Sans TC,
     sans-serif;
   border: 1px solid #cccccc;
   border-collapse: collapse;
@@ -130,7 +139,11 @@ table.reportTable td {
 }
 
 .rectElem.animated {
-  font-family: Open Sans, Helvetica, Arial, sans-serif;
+  font-family:
+    Open Sans,
+    Helvetica,
+    Arial,
+    sans-serif;
   margin: 4px;
 }
 
@@ -138,4 +151,17 @@ table.reportTable td {
   font-style: normal;
   font-weight: bold !important;
   border-top: 1px solid #000000;
+}
+
+/* One statement per first dimension: heading and total of each statement */
+.statement_header {
+  font-weight: bold !important;
+  font-size: 1.1em;
+  padding-top: 12px !important;
+  border-bottom: 1px solid #000000;
+}
+
+.statement_total {
+  font-style: normal;
+  font-weight: bold !important;
 }

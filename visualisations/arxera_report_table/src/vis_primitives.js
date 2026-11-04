@@ -157,8 +157,8 @@ class HeaderCell {
     this.align = align
       ? align
       : this.column.modelField.is_numeric
-      ? 'right'
-      : 'left';
+        ? 'right'
+        : 'left';
 
     this.modelField = modelField;
     this.pivotData = pivotData;
@@ -287,6 +287,7 @@ class Row {
     this.hide = false;
     this.type = type; // line_item | subtotal | total
     this.runningTotal = false; // subtotal rows added by addRunningTotals()
+    this.statementHeader = false; // heading rows added by addStatementRows()
     this.sort = []; // [ section, subtotal group, row number ]
     this.data = {}; // Indexed by Column.id
     // { value: any, rendered: string, html?: string, links?: array }
@@ -322,6 +323,7 @@ class Column {
     this.unit = modelField.unit || '';
     this.hide = modelField.hide || false;
     this.isVariance = false;
+    this.varianceOf = []; // [baseline id, comparison id] for variance columns
     this.variance_type = null;
     this.pivoted = false;
     this.isRowTotal = false;
