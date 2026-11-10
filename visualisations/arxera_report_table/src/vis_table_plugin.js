@@ -150,6 +150,13 @@ const tableModelCoreOptions = {
     default: 'pivots',
     order: 6,
   },
+  rowTotalsPerPivot: {
+    section: 'Table',
+    type: 'boolean',
+    label: 'Row Total per Second Pivot Value',
+    default: false,
+    order: 6.5,
+  },
   useViewName: {
     section: 'Table',
     type: 'boolean',
@@ -347,6 +354,16 @@ class VisPluginTableModel {
 
     var col_idx = 0;
     this.addPivotsAndHeaders(queryResponse);
+    // Looker's row total adds up every pivot column, which mixes the values of
+    // the second pivot (e.g. RON + EUR). This replaces it with one row total
+    // per second pivot value, added up by the vis.
+    this.rowTotalsPerPivot =
+      Boolean(config.rowTotalsPerPivot) &&
+      this.pivot_fields.length === 2 &&
+      (this.hasRowTotals ||
+        (this.pivot_values || []).some(
+          pivot_value => pivot_value.key === '$$$_row_total_$$$'
+        ));
     this.addDimensions(queryResponse, col_idx);
     // Each statement is one first dimension value, so its subtotals start at
     // the second dimension: at a depth of 1 they would repeat the statement
@@ -381,6 +398,9 @@ class VisPluginTableModel {
       if (this.statementPerGroup) {
         this.addStatementRows();
       }
+    }
+    if (this.rowTotalsPerPivot) {
+      this.addRowTotalsPerPivot();
     }
     // console.log('table in progress', this)
     if (this.addColSubtotals && this.pivot_fields.length === 2) {
@@ -803,7 +823,10 @@ class VisPluginTableModel {
           // for pivoted measures, skip table calcs for row totals
           // if user wants a row total of a table calc, it must be defined as another table calc (in which case, it will be a supermeasure)
           var include_measure =
-            !isRowTotal || (isRowTotal && !measure.is_table_calculation);
+            !isRowTotal ||
+            (isRowTotal &&
+              !measure.is_table_calculation &&
+              !this.rowTotalsPerPivot);
 
           if (include_measure) {
             var column = new Column(
@@ -2260,6 +2283,159 @@ class VisPluginTableModel {
         url: [path, shared.join('&')].join('?'),
       },
     ];
+  }
+
+  /**
+   * One row total per value of the second pivot, in place of Looker's single
+   * row total, e.g. Property > RON | EUR gets Row Total > RON | EUR. Each one
+   * adds up that value's pivot columns on every row, subtotal and running
+   * total included. Measures that are not added up (the same rule as the row
+   * subtotals) and table calculations get no row total.
+   */
+  addRowTotalsPerPivot() {
+    var pivot1 = this.pivot_fields[1].name;
+    var pivotValueOf = column => {
+      var level = column.levels.find(l => l.type === 'pivot1');
+      return level && level.pivotData && level.pivotData.data
+        ? level.pivotData.data[pivot1]
+        : undefined;
+    };
+
+    var secondPivotValues = [];
+    this.pivot_values.forEach(pivot_value => {
+      if (pivot_value.key === '$$$_row_total_$$$') {
+        return;
+      }
+      var value = pivot_value.data[pivot1];
+      if (!secondPivotValues.some(v => v.value === value)) {
+        var meta = pivot_value.metadata[pivot1] || {};
+        secondPivotValues.push({
+          value: value,
+          label: meta.rendered || meta.value || value,
+          sort_value: pivot_value.sort_values[pivot1],
+        });
+      }
+    });
+
+    var totalColumns = [];
+    secondPivotValues.forEach(pivotValue => {
+      this.measures.forEach((measure, m) => {
+        if (measure.is_table_calculation) {
+          return;
+        }
+        var addUp = this.config['runningTotal|' + measure.name];
+        var additive =
+          measure.is_numeric &&
+          (typeof addUp === 'boolean'
+            ? addUp
+            : VisPluginTableModel.isAdditiveMeasure(measure));
+        if (!additive) {
+          return;
+        }
+        var members = this.columns.filter(
+          column =>
+            column.pivoted &&
+            !column.subtotal &&
+            column.modelField.name === measure.name &&
+            pivotValueOf(column) === pivotValue.value
+        );
+        if (members.length === 0) {
+          return;
+        }
+
+        var column = new Column(
+          ['$$$_row_total_$$$', pivotValue.value, measure.name].join('.'),
+          this,
+          measure
+        );
+        column.pivoted = false;
+        column.isRowTotal = true;
+        column.pivot_key = ['$$$_row_total_$$$', pivotValue.value].join('|');
+        column.rowTotalMembers = members;
+
+        this.headers.forEach(header => {
+          switch (header.type) {
+            case 'pivot0':
+            case 'pivot1':
+              column.levels.push(
+                new HeaderCell({
+                  column: column,
+                  type: header.type,
+                  modelField: {
+                    label:
+                      header.type === 'pivot0' ? 'Row Total' : pivotValue.label,
+                  },
+                })
+              );
+              break;
+            case 'heading':
+            case 'field':
+              column.levels.push(
+                new HeaderCell({
+                  column: column,
+                  type: header.type,
+                  modelField: measure,
+                })
+              );
+              break;
+          }
+        });
+
+        // After the pivoted columns, in the same order as they are
+        var pivotSort = {name: pivot1, value: pivotValue.sort_value};
+        var measureSort = {name: 'measure_idx', value: m};
+        column.sort =
+          this.sortColsBy === 'pivots'
+            ? [{name: 'section', value: 2}, pivotSort, measureSort]
+            : [{name: 'section', value: 2}, measureSort, pivotSort];
+        totalColumns.push(column);
+      });
+    });
+
+    this.data.forEach(row => {
+      totalColumns.forEach(column => {
+        var cells = column.rowTotalMembers.map(member => row.data[member.id]);
+        var cell_style = ['numeric', 'measure'];
+        if (row.statementHeader) {
+          cell_style = ['statement_header', 'measure'];
+        } else if (['subtotal', 'total'].includes(row.type)) {
+          cell_style = ['subtotal', 'numeric', 'measure', 'total'];
+        }
+
+        // Statement headings and blank running totals stay blank; with no
+        // values to add up (all null), the total is null, as Looker's is.
+        var values = cells
+          .map(cell => (cell ? cell.value : null))
+          .filter(value => value !== '' && value !== null);
+        var blank =
+          row.statementHeader || cells.every(cell => cell && cell.value === '');
+        var numbers = values.map(Number).filter(Number.isFinite);
+        var value = blank
+          ? ''
+          : numbers.length === 0
+            ? null
+            : numbers.reduce((a, b) => a + b, 0);
+        var rendered =
+          value === '' || value === null
+            ? ''
+            : this.formatCellValue(column.modelField.value_format, value);
+
+        row.data[column.id] = new DataCell({
+          value: value,
+          rendered: rendered,
+          cell_style: cell_style,
+          align: 'right',
+          colid: column.id,
+          rowid: row.id,
+          links:
+            row.type === 'line_item' && rendered
+              ? this.subtotalDrillLinks(cells.filter(Boolean), rendered)
+              : [],
+        });
+      });
+    });
+
+    this.columns.push(...totalColumns);
   }
 
   /**
