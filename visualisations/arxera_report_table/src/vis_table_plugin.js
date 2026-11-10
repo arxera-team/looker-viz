@@ -739,7 +739,12 @@ class VisPluginTableModel {
       // bottom header row, level with the second pivot's values.
       var fieldIdx = this.headers.findIndex(h => h.type === 'field');
       var lastIdx = this.headers.length - 1;
-      if (fieldIdx > -1 && fieldIdx < lastIdx) {
+      if (
+        this.sortColsBy === 'pivot0Measures' &&
+        this.pivot_fields.length === 2 &&
+        fieldIdx > -1 &&
+        fieldIdx < lastIdx
+      ) {
         column.levels[lastIdx].label = column.getHeaderCellLabel(fieldIdx);
         column.levels[fieldIdx].label = '';
       }
@@ -3419,7 +3424,11 @@ class VisPluginTableModel {
         .filter(c => c.modelField.type === 'dimension');
 
       dimensionColumns.forEach(column => {
-        var label = column.getHeaderCellLabelByType('field');
+        // With the measures between the pivots, the label is on the bottom
+        // header row (see addDimensions).
+        var label =
+          column.getHeaderCellLabelByType('field') ||
+          column.getHeaderCellLabel(column.levels.length - 1);
         var value = row.data[column.id].rendered || row.data[column.id].value;
         var rowClass = column.id === focusColumn.id ? 'focus' : '';
         tipHTML += [

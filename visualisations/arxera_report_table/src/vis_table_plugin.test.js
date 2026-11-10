@@ -357,4 +357,18 @@ describe('sortColumnsBy pivot0Measures', () => {
     line.setHeaderCellLabels();
     expect(line.levels.map(l => l.label)).toEqual(['', '', 'Line']);
   });
+
+  test('keeps the dimension label on the measures row when sorting by measures', () => {
+    const line = build('measures').columns.find(c => c.id === 'line');
+    expect(line.levels.map(l => l.label)).toEqual(['Line', '', '']);
+  });
+
+  test('names the dimension in the cell tooltip', () => {
+    const model = build('pivot0Measures');
+    const tip = model.getCellToolTip(
+      model.data[0].id,
+      'Month|FIELD|RON.actual'
+    );
+    expect(tip).toContain('<em>Line:</em>');
+  });
 });
