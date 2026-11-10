@@ -142,7 +142,11 @@ const tableModelCoreOptions = {
     type: 'string',
     display: 'select',
     label: 'Sort Columns By',
-    values: [{Pivots: 'pivots'}, {Measures: 'measures'}],
+    values: [
+      {Pivots: 'pivots'},
+      {Measures: 'measures'},
+      {'First Pivot, then Measures': 'pivot0Measures'},
+    ],
     default: 'pivots',
     order: 6,
   },
@@ -642,7 +646,16 @@ class VisPluginTableModel {
     //   });
     // }
 
-    if (this.sortColsBy === 'pivots') {
+    if (
+      this.sortColsBy === 'pivot0Measures' &&
+      this.pivot_fields.length === 2
+    ) {
+      // e.g. Month > Actual > RON | EUR: measures between the two pivots
+      this.headers.splice(1, 0, ...measureHeaders);
+    } else if (
+      this.sortColsBy === 'pivots' ||
+      this.sortColsBy === 'pivot0Measures'
+    ) {
       this.headers.push(...measureHeaders);
     } else {
       this.headers.unshift(...measureHeaders);
@@ -854,7 +867,16 @@ class VisPluginTableModel {
             if (this.sortColsBy === 'measures') {
               sort.push({name: 'measure_idx', value: m});
             }
-            if (this.pivot_fields.length === 2) {
+            if (
+              this.sortColsBy === 'pivot0Measures' &&
+              this.pivot_fields.length === 2 &&
+              !isRowTotal
+            ) {
+              // first pivot, then measure, then second pivot
+              sort.push(tempSort[0]);
+              sort.push({name: 'measure_idx', value: m});
+              sort.push(tempSort[1]);
+            } else if (this.pivot_fields.length === 2) {
               if (this.addColSubtotals) {
                 // column subtotals present, therefore must sort by pivot0, pivot1 to get correct grouping
                 sort = sort.concat(tempSort);
@@ -883,7 +905,11 @@ class VisPluginTableModel {
               sort.push(tempSort[0]);
             }
 
-            if (this.sortColsBy === 'pivots') {
+            if (
+              this.sortColsBy === 'pivots' ||
+              (this.sortColsBy === 'pivot0Measures' &&
+                (this.pivot_fields.length !== 2 || isRowTotal))
+            ) {
               sort.push({name: 'measure_idx', value: m});
             }
             column.sort = sort;

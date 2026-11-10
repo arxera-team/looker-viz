@@ -276,3 +276,74 @@ describe('hideColumnsWithoutFilter', () => {
     ]);
   });
 });
+
+describe('sortColumnsBy pivot0Measures', () => {
+  const build = sortColumnsBy => {
+    const pv = (col, colSort, cur, curSort) => ({
+      key: `${col}|FIELD|${cur}`,
+      metadata: {col: {value: col}, cur: {value: cur}},
+      sort_values: {col: colSort, cur: curSort},
+    });
+    const queryResponse = {
+      fields: {
+        dimension_like: [{name: 'line', label: 'Line', type: 'string'}],
+        measure_like: [
+          {name: 'actual', label: 'Actual', type: 'number', is_numeric: true},
+          {name: 'budget', label: 'Budget', type: 'number', is_numeric: true},
+        ],
+        pivots: [
+          {name: 'col', label: 'Report Column'},
+          {name: 'cur', label: 'Currency'},
+        ],
+        supermeasure_like: [],
+      },
+      sorts: [
+        {name: 'col', desc: false},
+        {name: 'cur', desc: false},
+      ],
+      pivots: [
+        pv('Month', 1, 'RON', 1),
+        pv('Month', 1, 'EUR', 2),
+        pv('YTD', 2, 'RON', 1),
+        pv('YTD', 2, 'EUR', 2),
+      ],
+    };
+    const cell = v => ({value: v, rendered: String(v)});
+    const vals = {};
+    queryResponse.pivots.forEach(p => (vals[p.key] = cell(1)));
+    const data = [{line: cell('Rent'), actual: vals, budget: {...vals}}];
+    return new VisPluginTableModel(data, queryResponse, {sortColumnsBy});
+  };
+  const order = model => model.columns.filter(c => c.pivoted).map(c => c.id);
+
+  test('puts the measures between the two pivots', () => {
+    expect(order(build('pivot0Measures'))).toEqual([
+      'Month|FIELD|RON.actual',
+      'Month|FIELD|EUR.actual',
+      'Month|FIELD|RON.budget',
+      'Month|FIELD|EUR.budget',
+      'YTD|FIELD|RON.actual',
+      'YTD|FIELD|EUR.actual',
+      'YTD|FIELD|RON.budget',
+      'YTD|FIELD|EUR.budget',
+    ]);
+    expect(build('pivot0Measures').headers.map(h => h.type)).toEqual([
+      'pivot0',
+      'field',
+      'pivot1',
+    ]);
+  });
+
+  test('keeps the default pivots order unchanged', () => {
+    expect(order(build('pivots'))).toEqual([
+      'Month|FIELD|RON.actual',
+      'Month|FIELD|RON.budget',
+      'Month|FIELD|EUR.actual',
+      'Month|FIELD|EUR.budget',
+      'YTD|FIELD|RON.actual',
+      'YTD|FIELD|RON.budget',
+      'YTD|FIELD|EUR.actual',
+      'YTD|FIELD|EUR.budget',
+    ]);
+  });
+});
