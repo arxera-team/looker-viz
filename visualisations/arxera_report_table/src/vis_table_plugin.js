@@ -735,6 +735,15 @@ class VisPluginTableModel {
         }
       });
 
+      // With the measures between the pivots, the dimension label sits on the
+      // bottom header row, level with the second pivot's values.
+      var fieldIdx = this.headers.findIndex(h => h.type === 'field');
+      var lastIdx = this.headers.length - 1;
+      if (fieldIdx > -1 && fieldIdx < lastIdx) {
+        column.levels[lastIdx].label = column.getHeaderCellLabel(fieldIdx);
+        column.levels[fieldIdx].label = '';
+      }
+
       this.columns.push(column);
       col_idx += 10;
     });

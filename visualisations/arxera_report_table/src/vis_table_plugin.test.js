@@ -346,4 +346,15 @@ describe('sortColumnsBy pivot0Measures', () => {
       'YTD|FIELD|EUR.budget',
     ]);
   });
+
+  test('puts the dimension label on the bottom header row', () => {
+    const line = build('pivot0Measures').columns.find(c => c.id === 'line');
+    expect(line.levels.map(l => l.label)).toEqual(['', '', 'Line']);
+  });
+
+  test('keeps the dimension label on the field row by default', () => {
+    const line = build('pivots').columns.find(c => c.id === 'line');
+    line.setHeaderCellLabels();
+    expect(line.levels.map(l => l.label)).toEqual(['', '', 'Line']);
+  });
 });
