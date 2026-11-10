@@ -142,7 +142,11 @@ const tableModelCoreOptions = {
     type: 'string',
     display: 'select',
     label: 'Sort Columns By',
-    values: [{Pivots: 'pivots'}, {Measures: 'measures'}],
+    values: [
+      {Pivots: 'pivots'},
+      {Measures: 'measures'},
+      {'First Pivot, then Measures': 'pivot0Measures'},
+    ],
     default: 'pivots',
     order: 6,
   },
@@ -642,7 +646,16 @@ class VisPluginTableModel {
     //   });
     // }
 
-    if (this.sortColsBy === 'pivots') {
+    if (
+      this.sortColsBy === 'pivot0Measures' &&
+      this.pivot_fields.length === 2
+    ) {
+      // e.g. Month > Actual > RON | EUR: measures between the two pivots
+      this.headers.splice(1, 0, ...measureHeaders);
+    } else if (
+      this.sortColsBy === 'pivots' ||
+      this.sortColsBy === 'pivot0Measures'
+    ) {
       this.headers.push(...measureHeaders);
     } else {
       this.headers.unshift(...measureHeaders);
@@ -721,6 +734,20 @@ class VisPluginTableModel {
             break;
         }
       });
+
+      // With the measures between the pivots, the dimension label sits on the
+      // bottom header row, level with the second pivot's values.
+      var fieldIdx = this.headers.findIndex(h => h.type === 'field');
+      var lastIdx = this.headers.length - 1;
+      if (
+        this.sortColsBy === 'pivot0Measures' &&
+        this.pivot_fields.length === 2 &&
+        fieldIdx > -1 &&
+        fieldIdx < lastIdx
+      ) {
+        column.levels[lastIdx].label = column.getHeaderCellLabel(fieldIdx);
+        column.levels[fieldIdx].label = '';
+      }
 
       this.columns.push(column);
       col_idx += 10;
@@ -854,7 +881,16 @@ class VisPluginTableModel {
             if (this.sortColsBy === 'measures') {
               sort.push({name: 'measure_idx', value: m});
             }
-            if (this.pivot_fields.length === 2) {
+            if (
+              this.sortColsBy === 'pivot0Measures' &&
+              this.pivot_fields.length === 2 &&
+              !isRowTotal
+            ) {
+              // first pivot, then measure, then second pivot
+              sort.push(tempSort[0]);
+              sort.push({name: 'measure_idx', value: m});
+              sort.push(tempSort[1]);
+            } else if (this.pivot_fields.length === 2) {
               if (this.addColSubtotals) {
                 // column subtotals present, therefore must sort by pivot0, pivot1 to get correct grouping
                 sort = sort.concat(tempSort);
@@ -883,7 +919,11 @@ class VisPluginTableModel {
               sort.push(tempSort[0]);
             }
 
-            if (this.sortColsBy === 'pivots') {
+            if (
+              this.sortColsBy === 'pivots' ||
+              (this.sortColsBy === 'pivot0Measures' &&
+                (this.pivot_fields.length !== 2 || isRowTotal))
+            ) {
               sort.push({name: 'measure_idx', value: m});
             }
             column.sort = sort;
@@ -3384,7 +3424,11 @@ class VisPluginTableModel {
         .filter(c => c.modelField.type === 'dimension');
 
       dimensionColumns.forEach(column => {
-        var label = column.getHeaderCellLabelByType('field');
+        // With the measures between the pivots, the label is on the bottom
+        // header row (see addDimensions).
+        var label =
+          column.getHeaderCellLabelByType('field') ||
+          column.getHeaderCellLabel(column.levels.length - 1);
         var value = row.data[column.id].rendered || row.data[column.id].value;
         var rowClass = column.id === focusColumn.id ? 'focus' : '';
         tipHTML += [

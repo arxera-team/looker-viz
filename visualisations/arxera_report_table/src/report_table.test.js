@@ -527,4 +527,91 @@ describe('report_table visualization plugin', () => {
       expect(element.querySelector('#exportToolbar')).toBeNull();
     });
   });
+
+  describe('measures between the two pivots', () => {
+    const pv = (col, colSort, cur, curSort) => ({
+      key: `${col}|FIELD|${cur}`,
+      metadata: {col: {value: col}, cur: {value: cur}},
+      sort_values: {col: colSort, cur: curSort},
+    });
+    const queryResponse = {
+      fields: {
+        dimension_like: [{name: 'line', label: 'Line', type: 'string'}],
+        measure_like: [
+          {name: 'actual', label: 'Actual', type: 'number', is_numeric: true},
+          {name: 'budget', label: 'Budget', type: 'number', is_numeric: true},
+        ],
+        pivots: [
+          {name: 'col', label: 'Report Column'},
+          {name: 'cur', label: 'Currency'},
+        ],
+        supermeasure_like: [],
+      },
+      sorts: [
+        {name: 'col', desc: false},
+        {name: 'cur', desc: false},
+      ],
+      pivots: [
+        pv('Month', 1, 'RON', 1),
+        pv('Month', 1, 'EUR', 2),
+        pv('YTD', 2, 'RON', 1),
+        pv('YTD', 2, 'EUR', 2),
+      ],
+    };
+    const cell = v => ({value: v, rendered: String(v)});
+    const vals = () => {
+      const out = {};
+      queryResponse.pivots.forEach((p, i) => (out[p.key] = cell(i + 1)));
+      return out;
+    };
+    const data = [{line: cell('Rent'), actual: vals(), budget: vals()}];
+
+    test('header rows read Month > Actual > RON | EUR', async () => {
+      await vizPlugin.updateAsync(
+        data,
+        element,
+        {theme: 'traditional', sortColumnsBy: 'pivot0Measures', spanCols: true},
+        queryResponse,
+        {},
+        mockDone
+      );
+      const rows = [...element.querySelectorAll('#reportTable thead tr')].map(
+        tr =>
+          [...tr.querySelectorAll('th')].map(th => [
+            th.textContent.trim(),
+            parseInt(th.getAttribute('colspan') || '1', 10),
+          ])
+      );
+      expect(rows).toEqual([
+        [
+          ['', 1],
+          ['Month', 4],
+          ['YTD', 4],
+        ],
+        [
+          ['', 1],
+          ['Actual', 2],
+          ['Budget', 2],
+          ['Actual', 2],
+          ['Budget', 2],
+        ],
+        [
+          ['Line', 1],
+          ['RON', 1],
+          ['EUR', 1],
+          ['RON', 1],
+          ['EUR', 1],
+          ['RON', 1],
+          ['EUR', 1],
+          ['RON', 1],
+          ['EUR', 1],
+        ],
+      ]);
+      const body = [...element.querySelectorAll('#reportTable tbody tr')][0];
+      expect(
+        [...body.querySelectorAll('td')].map(td => td.textContent.trim())
+      ).toEqual(['Rent', '1', '2', '1', '2', '3', '4', '3', '4']);
+      expect(mockDone).toHaveBeenCalled();
+    });
+  });
 });
