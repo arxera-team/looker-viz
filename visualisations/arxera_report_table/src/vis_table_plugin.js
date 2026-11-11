@@ -2381,13 +2381,18 @@ class VisPluginTableModel {
           }
         });
 
-        // After the pivoted columns, in the same order as they are
+        // After the pivoted columns, in the same order as they are, and before
+        // the table calculations, which share section 2 but sort on 0 next.
         var pivotSort = {name: pivot1, value: pivotValue.sort_value};
         var measureSort = {name: 'measure_idx', value: m};
-        column.sort =
+        column.sort = [
+          {name: 'section', value: 2},
+          {name: 'row_total', value: -1},
+        ].concat(
           this.sortColsBy === 'pivots'
-            ? [{name: 'section', value: 2}, pivotSort, measureSort]
-            : [{name: 'section', value: 2}, measureSort, pivotSort];
+            ? [pivotSort, measureSort]
+            : [measureSort, pivotSort]
+        );
         totalColumns.push(column);
       });
     });
@@ -2400,6 +2405,12 @@ class VisPluginTableModel {
           cell_style = ['statement_header', 'measure'];
         } else if (['subtotal', 'total'].includes(row.type)) {
           cell_style = ['subtotal', 'numeric', 'measure', 'total'];
+          // Running and statement totals keep their own style (see buildSumRow).
+          ['running_total', 'statement_total'].forEach(style => {
+            if (cells.some(cell => cell && cell.cell_style.includes(style))) {
+              cell_style.push(style);
+            }
+          });
         }
 
         // Statement headings and blank running totals stay blank; with no

@@ -209,3 +209,43 @@ describe('rowTotalsPerPivot', () => {
     expect(model.transposed_columns.length).toBeGreaterThan(0);
   });
 });
+
+describe('rowTotalsPerPivot with other columns and rows', () => {
+  test('keeps the row totals together before a table calculation', () => {
+    const query = queryResponse();
+    query.fields.measure_like[1].type = 'sum';
+    query.fields.supermeasure_like = [
+      {
+        name: 'share',
+        label: 'Share',
+        type: 'number',
+        is_numeric: true,
+        is_table_calculation: true,
+        value_format: '#,##0',
+      },
+    ];
+    const rows = data().map(row => ({...row, share: cell(1)}));
+    const model = new VisPluginTableModel(rows, query, {
+      rowTotalsPerPivot: true,
+    });
+    expect(model.columns.slice(-5).map(c => c.id)).toEqual([
+      RON,
+      '$$$_row_total_$$$.RON.rate',
+      EUR,
+      '$$$_row_total_$$$.EUR.rate',
+      'share',
+    ]);
+  });
+
+  test('styles running totals as running totals', () => {
+    const model = build({
+      rowTotalsPerPivot: true,
+      rowSubtotals: true,
+      subtotalDepth: '1',
+      runningTotals: 'NOI > Direct Costs',
+    });
+    const noi = model.data.find(r => r.id === 'RunningTotal|NOI');
+    expect(noi.data[RON].cell_style).toContain('running_total');
+    expect(noi.data[RON].value).toBe(105);
+  });
+});
