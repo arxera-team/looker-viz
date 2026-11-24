@@ -1201,6 +1201,100 @@ class VisPluginTableModel {
     let return_val = SSF.format(valueFormat, value);
     return return_val;
   }
+
+  /**
+   * The currency text around the number in a cell's html, e.g. '£' before
+   * '11,580.1' or ' RON' after '836.6'. LookML html often adds the row's
+   * currency symbol to a number-only value_format; totals the vis calculates
+   * itself have no html, so they borrow the symbol from their members.
+   * @param {DataCell} cell
+   * @returns {{prefix: string, suffix: string}|null} null when the cell has no
+   *   html, or its html does not contain its formatted value
+   */
+  static currencyAffix(cell) {
+    if (!cell) {
+      return null;
+    }
+    if (cell.currencyAffix) {
+      return cell.currencyAffix;
+    }
+    if (!cell.html || [null, undefined, ''].includes(cell.rendered)) {
+      return null;
+    }
+    var text;
+    try {
+      text = new DOMParser().parseFromString(cell.html, 'text/html')
+        .documentElement.textContent;
+    } catch (error) {
+      return null;
+    }
+    // Compare without signs and brackets: html may move them around the symbol.
+    const strip = s =>
+      String(s)
+        .replace(/[()\-−]/g, '')
+        .trim();
+    const number = strip(cell.rendered);
+    const shown = strip(text);
+    const at = number ? shown.indexOf(number) : -1;
+    if (at < 0) {
+      return null;
+    }
+    return {
+      prefix: shown.slice(0, at),
+      suffix: shown.slice(at + number.length),
+    };
+  }
+
+  /**
+   * The currency text every member cell shares, so a calculated total shows the
+   * same symbol as the rows it adds up. Members in different currencies (e.g.
+   * £ and RON) give null: a mixed total gets no symbol rather than a wrong one.
+   * Cells without currency html (blanks, ∅) do not count either way.
+   * @param {DataCell[]} cells
+   * @returns {{prefix: string, suffix: string}|null}
+   */
+  static sharedCurrencyAffix(cells) {
+    var shared = null;
+    for (const cell of cells) {
+      const affix = VisPluginTableModel.currencyAffix(cell);
+      if (!affix) {
+        continue;
+      }
+      if (!shared) {
+        shared = affix;
+      } else if (
+        shared.prefix !== affix.prefix ||
+        shared.suffix !== affix.suffix
+      ) {
+        return null;
+      }
+    }
+    return shared && (shared.prefix || shared.suffix) ? shared : null;
+  }
+
+  /**
+   * Puts currency text around a formatted value, keeping brackets or a minus
+   * sign on the outside: (1,135.6) with '£' becomes (£1,135.6).
+   * @param {*} rendered - the formatted value
+   * @param {{prefix: string, suffix: string}|null} affix
+   */
+  static withCurrencyAffix(rendered, affix) {
+    if (!affix || [null, undefined, ''].includes(rendered)) {
+      return rendered;
+    }
+    var number = String(rendered);
+    var open = '';
+    var close = '';
+    if (number.startsWith('(') && number.endsWith(')')) {
+      open = '(';
+      close = ')';
+      number = number.slice(1, -1);
+    } else if (number.startsWith('-')) {
+      open = '-';
+      number = number.slice(1);
+    }
+    return open + affix.prefix + number + affix.suffix + close;
+  }
   /**
    * this.subtotals_data
    * @param {*} queryResponse
@@ -1869,6 +1963,14 @@ class VisPluginTableModel {
               colid: column.id,
               rowid: subtotalRow.id,
             });
+            var affix = VisPluginTableModel.sharedCurrencyAffix(member_cells);
+            if (affix) {
+              cell.rendered = VisPluginTableModel.withCurrencyAffix(
+                cell.rendered,
+                affix
+              );
+              cell.currencyAffix = affix;
+            }
             cell.links = this.subtotalDrillLinks(member_cells, cell.rendered);
             subtotalRow.data[column.id] = cell;
           }
@@ -2213,6 +2315,7 @@ class VisPluginTableModel {
             : VisPluginTableModel.isAdditiveMeasure(column.modelField));
         // Blank (not null, which renders as '∅') when not added up.
         var value = '';
+        var memberCells = [];
         if (additive) {
           value = 0;
           this.data.forEach(row => {
@@ -2222,6 +2325,7 @@ class VisPluginTableModel {
               row.sort[1].value >= first &&
               row.sort[1].value <= last
             ) {
+              memberCells.push(row.data[column.id]);
               var cellValue = row.data[column.id]
                 ? row.data[column.id].value
                 : null;
@@ -2236,7 +2340,10 @@ class VisPluginTableModel {
           rendered:
             value === ''
               ? ''
-              : this.formatCellValue(column.modelField.value_format, value),
+              : VisPluginTableModel.withCurrencyAffix(
+                  this.formatCellValue(column.modelField.value_format, value),
+                  VisPluginTableModel.sharedCurrencyAffix(memberCells)
+                ),
           cell_style: [
             'total',
             style,
@@ -2642,16 +2749,27 @@ class VisPluginTableModel {
           // subtotalColumn.columns i.e. the individual columns that are aggregated into a single subtotal columns
           subtotal_value += row.data[column.id].value;
         });
+        var affix = VisPluginTableModel.sharedCurrencyAffix(
+          subtotalColumn.subtotal_data.columns.map(
+            column => row.data[column.id]
+          )
+        );
         row.data[subtotalColumn.id] = new DataCell({
           value: subtotal_value,
-          rendered: this.formatCellValue(
-            subtotalColumn.modelField.value_format,
-            subtotal_value
+          rendered: VisPluginTableModel.withCurrencyAffix(
+            this.formatCellValue(
+              subtotalColumn.modelField.value_format,
+              subtotal_value
+            ),
+            affix
           ),
           cell_style: cell_style,
           colid: subtotalColumn.id,
           rowid: row.id,
         });
+        if (affix) {
+          row.data[subtotalColumn.id].currencyAffix = affix;
+        }
         if (['subtotal', 'total'].includes(row.type)) {
           row.data[subtotalColumn.id].cell_style.push('total');
         }
